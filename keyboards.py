@@ -102,7 +102,8 @@ def payment_admin_kb(payment_id: int) -> InlineKeyboardMarkup:
 def admin_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="💳 To'lovlar")],
+            [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="👥 Userlar")],
+            [KeyboardButton(text="💳 To'lovlar")],
             [KeyboardButton(text="🎟 Obuna berish"), KeyboardButton(text="📢 E'lon yuborish")],
             [KeyboardButton(text="⚙️ To'lov sozlamalari")],
             [KeyboardButton(text="⬅️ Orqaga")],

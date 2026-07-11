@@ -41,6 +41,7 @@ from repository import (
     list_pending_payments,
     list_groups,
     list_user_ids,
+    list_user_summaries,
     remove_group,
     set_bot_config,
     set_interval,
@@ -231,6 +232,28 @@ async def send_admin_broadcast(message: Message, state: FSMContext, bot: Bot):
             failed += 1
     await state.clear()
     await message.answer(f"✅ E'lon yuborildi.\n\nYuborildi: {sent}\nYetib bormadi: {failed}", reply_markup=admin_menu_kb())
+
+
+@router.message(F.text.in_({"👥 Userlar", "Userlar"}))
+async def admin_users(message: Message):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    users = await list_user_summaries(limit=20)
+    if not users:
+        await message.answer("Hozircha user yo'q.", reply_markup=admin_menu_kb())
+        return
+    lines = ["👥 Oxirgi userlar\n"]
+    for item in users:
+        linked = "ulangan" if item["linked"] else "ulanmagan"
+        sub = _format_until(item["active_until"]) if item["active_until"] else "yo'q"
+        active = "aktiv" if item["active"] else "aktiv emas"
+        lines.append(
+            f"{item['user_id']} | {item['first_name']}\n"
+            f"Profil: {linked} | Obuna: {active}\n"
+            f"Gacha: {sub}"
+        )
+    await message.answer("\n\n".join(lines), reply_markup=admin_menu_kb())
 
 
 @router.message(F.text.in_({"🎟 Obuna berish", "Obuna berish"}))
@@ -644,7 +667,7 @@ async def approve_payment(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("payno:"))
-async def reject_payment(callback: CallbackQuery):
+async def reject_payment(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("Ruxsat yo'q.", show_alert=True)
         return
@@ -653,9 +676,40 @@ async def reject_payment(callback: CallbackQuery):
     if not payment or payment.status != "pending":
         await callback.answer("Bu chek allaqachon ko'rilgan.", show_alert=True)
         return
+    await state.update_data(reject_payment_id=payment_id)
+    await state.set_state(AdStates.waiting_payment_reject_reason)
+    await callback.message.answer("❌ Rad etish sababini yozing. Masalan: chek noto'g'ri yoki summa mos emas.")
+    await callback.answer()
+
+
+@router.message(AdStates.waiting_payment_reject_reason)
+async def receive_reject_reason(message: Message, state: FSMContext, bot: Bot):
+    if await _cancel_admin_state(message, state):
+        return
+    if not _is_admin(message):
+        await state.clear()
+        return
+    reason = (message.text or "").strip()
+    if not reason:
+        await message.answer("Sabab yozing.")
+        return
+    data = await state.get_data()
+    payment_id = int(data["reject_payment_id"])
+    payment = await get_pending_payment(payment_id)
+    if not payment or payment.status != "pending":
+        await state.clear()
+        await message.answer("Bu chek allaqachon ko'rilgan.", reply_markup=admin_menu_kb())
+        return
     await set_payment_status(payment_id, "rejected")
-    await callback.bot.send_message(payment.user_id, "❌ To'lov tasdiqlanmadi. Admin bilan bog'laning.")
-    await callback.answer("Rad etildi")
+    await bot.send_message(
+        payment.user_id,
+        "❌ To'lov tasdiqlanmadi.\n\n"
+        f"Sabab: {reason}\n\n"
+        "Qayta chek yuborishingiz yoki admin bilan bog'lanishingiz mumkin.",
+        reply_markup=main_menu_kb(),
+    )
+    await state.clear()
+    await message.answer("✅ To'lov rad etildi va sabab userga yuborildi.", reply_markup=admin_menu_kb())
 
 
 @router.message()

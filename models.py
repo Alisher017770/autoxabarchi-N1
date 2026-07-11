@@ -44,6 +44,14 @@ class Subscription(Base):
     active_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class SubscriptionNotice(Base):
+    __tablename__ = "subscription_notices"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    reminded_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expired_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class PendingPayment(Base):
     __tablename__ = "pending_payments"
 

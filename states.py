@@ -13,3 +13,4 @@ class AdStates(StatesGroup):
     waiting_admin_price = State()
     waiting_admin_card = State()
     waiting_admin_owner = State()
+    waiting_payment_reject_reason = State()

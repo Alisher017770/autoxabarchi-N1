@@ -9,6 +9,7 @@ from config import BOT_BRAND, BOT_TOKEN, validate_config
 from db import init_db
 from handlers import router as main_router
 from repository import stop_all_running_profiles
+from subscription_monitor import subscription_monitor
 from telethon_clients import disconnect_all
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -41,11 +42,13 @@ async def main():
     dp.include_router(main_router)
 
     await stop_all_running_profiles()
+    monitor_task = asyncio.create_task(subscription_monitor(bot))
 
     try:
         logger.info("Bot ishga tushdi")
         await dp.start_polling(bot)
     finally:
+        monitor_task.cancel()
         await disconnect_all()
 
 

@@ -4,7 +4,7 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import BotConfig, Group, Settings, UserAccount, Subscription, PendingPayment
+from models import BotConfig, Group, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 
 
 async def get_settings(profile: str) -> Settings:
@@ -212,6 +212,29 @@ async def set_payment_status(payment_id: int, status: str):
             await session.commit()
 
 
+async def list_user_summaries(limit: int = 20) -> list[dict]:
+    now = datetime.utcnow()
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserAccount, Subscription)
+            .outerjoin(Subscription, Subscription.user_id == UserAccount.user_id)
+            .order_by(UserAccount.updated_at.desc())
+            .limit(limit)
+        )
+        items = []
+        for account, subscription in result.all():
+            active_until = subscription.active_until if subscription else None
+            items.append({
+                "user_id": account.user_id,
+                "first_name": account.first_name or "-",
+                "linked": bool(account.session_string),
+                "phone": account.phone or "-",
+                "active_until": active_until,
+                "active": bool(active_until and active_until > now),
+            })
+        return items
+
+
 async def get_admin_stats() -> dict:
     now = datetime.utcnow()
     async with async_session() as session:
@@ -254,6 +277,62 @@ async def list_user_ids() -> list[int]:
     async with async_session() as session:
         result = await session.execute(select(UserAccount.user_id))
         return [row[0] for row in result.all()]
+
+
+async def list_subscriptions_for_reminder(days_before: int = 3) -> list[Subscription]:
+    now = datetime.utcnow()
+    soon = now + timedelta(days=days_before)
+    async with async_session() as session:
+        result = await session.execute(
+            select(Subscription)
+            .outerjoin(SubscriptionNotice, SubscriptionNotice.user_id == Subscription.user_id)
+            .where(Subscription.active_until.is_not(None))
+            .where(Subscription.active_until > now)
+            .where(Subscription.active_until <= soon)
+            .where(
+                (SubscriptionNotice.reminded_until.is_(None))
+                | (SubscriptionNotice.reminded_until != Subscription.active_until)
+            )
+        )
+        return list(result.scalars().all())
+
+
+async def list_expired_subscriptions_for_notice() -> list[Subscription]:
+    now = datetime.utcnow()
+    async with async_session() as session:
+        result = await session.execute(
+            select(Subscription)
+            .outerjoin(SubscriptionNotice, SubscriptionNotice.user_id == Subscription.user_id)
+            .where(Subscription.active_until.is_not(None))
+            .where(Subscription.active_until <= now)
+            .where(
+                (SubscriptionNotice.expired_until.is_(None))
+                | (SubscriptionNotice.expired_until != Subscription.active_until)
+            )
+        )
+        return list(result.scalars().all())
+
+
+async def mark_subscription_reminded(user_id: int, active_until: datetime):
+    async with async_session() as session:
+        result = await session.execute(select(SubscriptionNotice).where(SubscriptionNotice.user_id == user_id))
+        notice = result.scalar_one_or_none()
+        if notice is None:
+            notice = SubscriptionNotice(user_id=user_id)
+            session.add(notice)
+        notice.reminded_until = active_until
+        await session.commit()
+
+
+async def mark_subscription_expired_notice(user_id: int, active_until: datetime):
+    async with async_session() as session:
+        result = await session.execute(select(SubscriptionNotice).where(SubscriptionNotice.user_id == user_id))
+        notice = result.scalar_one_or_none()
+        if notice is None:
+            notice = SubscriptionNotice(user_id=user_id)
+            session.add(notice)
+        notice.expired_until = active_until
+        await session.commit()
 
 
 async def get_payment_config() -> dict[str, str]:
