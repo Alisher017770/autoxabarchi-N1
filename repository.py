@@ -109,7 +109,16 @@ async def ensure_user(user_id: int, first_name: str | None = None) -> UserAccoun
         elif first_name:
             account.first_name = first_name
         account.updated_at = datetime.utcnow()
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            result = await session.execute(select(UserAccount).where(UserAccount.user_id == user_id))
+            account = result.scalar_one()
+            if first_name:
+                account.first_name = first_name
+            account.updated_at = datetime.utcnow()
+            await session.commit()
         await session.refresh(account)
         return account
 
@@ -124,7 +133,16 @@ async def save_user_session(user_id: int, phone: str, session_string: str):
         account.phone = phone
         account.session_string = session_string
         account.updated_at = datetime.utcnow()
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            result = await session.execute(select(UserAccount).where(UserAccount.user_id == user_id))
+            account = result.scalar_one()
+            account.phone = phone
+            account.session_string = session_string
+            account.updated_at = datetime.utcnow()
+            await session.commit()
 
 
 async def get_user_session(user_id: int) -> str | None:
