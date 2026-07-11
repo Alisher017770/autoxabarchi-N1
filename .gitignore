@@ -1,0 +1,9 @@
+.env
+adbot.db
+*.log
+*.session
+*.session-journal
+__pycache__/
+*.py[cod]
+.venv/
+venv/
