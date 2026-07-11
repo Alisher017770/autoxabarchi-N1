@@ -71,6 +71,18 @@ def _main_kb(message: Message | CallbackQuery):
     return main_menu_kb(_is_admin(message))
 
 
+def _is_back_text(message: Message) -> bool:
+    return (message.text or "") in {"⬅️ Orqaga", "Orqaga", "🛠 Admin panel", "Admin panel"}
+
+
+async def _cancel_admin_state(message: Message, state: FSMContext) -> bool:
+    if _is_admin(message) and _is_back_text(message):
+        await state.clear()
+        await _show_admin_panel(message)
+        return True
+    return False
+
+
 async def _show_home(message: Message):
     user = message.from_user
     await ensure_user(user.id, user.first_name)
@@ -200,6 +212,8 @@ async def ask_admin_broadcast(message: Message, state: FSMContext):
 
 @router.message(AdStates.waiting_admin_broadcast)
 async def send_admin_broadcast(message: Message, state: FSMContext, bot: Bot):
+    if await _cancel_admin_state(message, state):
+        return
     if not _is_admin(message):
         await state.clear()
         return
@@ -230,6 +244,8 @@ async def ask_sub_user(message: Message, state: FSMContext):
 
 @router.message(AdStates.waiting_admin_sub_user)
 async def receive_sub_user(message: Message, state: FSMContext):
+    if await _cancel_admin_state(message, state):
+        return
     if not _is_admin(message):
         await state.clear()
         return
@@ -244,6 +260,8 @@ async def receive_sub_user(message: Message, state: FSMContext):
 
 @router.message(AdStates.waiting_admin_sub_days)
 async def receive_sub_days(message: Message, state: FSMContext, bot: Bot):
+    if await _cancel_admin_state(message, state):
+        return
     if not _is_admin(message):
         await state.clear()
         return
@@ -288,6 +306,8 @@ async def ask_admin_price(message: Message, state: FSMContext):
 
 @router.message(AdStates.waiting_admin_price)
 async def save_admin_price(message: Message, state: FSMContext):
+    if await _cancel_admin_state(message, state):
+        return
     if not _is_admin(message):
         await state.clear()
         return
@@ -307,6 +327,8 @@ async def ask_admin_card(message: Message, state: FSMContext):
 
 @router.message(AdStates.waiting_admin_card)
 async def save_admin_card(message: Message, state: FSMContext):
+    if await _cancel_admin_state(message, state):
+        return
     if not _is_admin(message):
         await state.clear()
         return
@@ -326,6 +348,8 @@ async def ask_admin_owner(message: Message, state: FSMContext):
 
 @router.message(AdStates.waiting_admin_owner)
 async def save_admin_owner(message: Message, state: FSMContext):
+    if await _cancel_admin_state(message, state):
+        return
     if not _is_admin(message):
         await state.clear()
         return
