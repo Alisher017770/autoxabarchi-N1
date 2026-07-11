@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
+from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import Group, Settings, UserAccount, Subscription, PendingPayment
+from models import BotConfig, Group, Settings, UserAccount, Subscription, PendingPayment
 
 
 async def get_settings(profile: str) -> Settings:
@@ -209,3 +210,71 @@ async def set_payment_status(payment_id: int, status: str):
         if payment:
             payment.status = status
             await session.commit()
+
+
+async def get_admin_stats() -> dict:
+    now = datetime.utcnow()
+    async with async_session() as session:
+        users = await session.scalar(select(func.count()).select_from(UserAccount))
+        linked = await session.scalar(
+            select(func.count()).select_from(UserAccount).where(UserAccount.session_string.is_not(None))
+        )
+        groups = await session.scalar(select(func.count()).select_from(Group))
+        active_subs = await session.scalar(
+            select(func.count()).select_from(Subscription).where(Subscription.active_until > now)
+        )
+        pending_payments = await session.scalar(
+            select(func.count()).select_from(PendingPayment).where(PendingPayment.status == "pending")
+        )
+        approved_payments = await session.scalar(
+            select(func.count()).select_from(PendingPayment).where(PendingPayment.status == "approved")
+        )
+        return {
+            "users": users or 0,
+            "linked": linked or 0,
+            "groups": groups or 0,
+            "active_subs": active_subs or 0,
+            "pending_payments": pending_payments or 0,
+            "approved_payments": approved_payments or 0,
+        }
+
+
+async def list_pending_payments(limit: int = 10) -> list[PendingPayment]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(PendingPayment)
+            .where(PendingPayment.status == "pending")
+            .order_by(PendingPayment.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+async def list_user_ids() -> list[int]:
+    async with async_session() as session:
+        result = await session.execute(select(UserAccount.user_id))
+        return [row[0] for row in result.all()]
+
+
+async def get_payment_config() -> dict[str, str]:
+    defaults = {
+        "price": SUBSCRIPTION_PRICE,
+        "card": PAYMENT_CARD,
+        "owner": PAYMENT_OWNER,
+    }
+    async with async_session() as session:
+        result = await session.execute(select(BotConfig).where(BotConfig.key.in_(defaults.keys())))
+        values = {item.key: item.value for item in result.scalars().all()}
+        return {key: values.get(key, default) for key, default in defaults.items()}
+
+
+async def set_bot_config(key: str, value: str):
+    async with async_session() as session:
+        result = await session.execute(select(BotConfig).where(BotConfig.key == key))
+        item = result.scalar_one_or_none()
+        if item is None:
+            item = BotConfig(key=key, value=value)
+            session.add(item)
+        else:
+            item.value = value
+        await session.commit()

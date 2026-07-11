@@ -4,14 +4,17 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import INTERVAL_OPTIONS
 
 
-def main_menu_kb() -> ReplyKeyboardMarkup:
+def main_menu_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(text="👤 Profil ulash")],
+        [KeyboardButton(text="👥 Guruhlar"), KeyboardButton(text="💬 Xabar yozish")],
+        [KeyboardButton(text="🚀 Start / Stop")],
+        [KeyboardButton(text="⚙️ Sozlamalar")],
+    ]
+    if is_admin:
+        keyboard.append([KeyboardButton(text="🛠 Admin panel")])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="👤 Profil ulash")],
-            [KeyboardButton(text="👥 Guruhlar"), KeyboardButton(text="💬 Xabar yozish")],
-            [KeyboardButton(text="🚀 Start / Stop")],
-            [KeyboardButton(text="⚙️ Sozlamalar")],
-        ],
+        keyboard=keyboard,
         resize_keyboard=True,
     )
 
@@ -93,4 +96,35 @@ def payment_admin_kb(payment_id: int) -> InlineKeyboardMarkup:
     kb.button(text="✅ Tasdiqlash", callback_data=f"payok:{payment_id}")
     kb.button(text="❌ Rad etish", callback_data=f"payno:{payment_id}")
     kb.adjust(2)
+    return kb.as_markup()
+
+
+def admin_menu_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="💳 To'lovlar")],
+            [KeyboardButton(text="🎟 Obuna berish"), KeyboardButton(text="📢 E'lon yuborish")],
+            [KeyboardButton(text="⚙️ To'lov sozlamalari")],
+            [KeyboardButton(text="⬅️ Orqaga")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def payment_settings_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📌 Narx"), KeyboardButton(text="💳 Karta")],
+            [KeyboardButton(text="👤 Karta egasi")],
+            [KeyboardButton(text="🛠 Admin panel")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def pending_payments_kb(payments: list) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for payment in payments:
+        kb.button(text=f"💳 #{payment.id} - {payment.user_id}", callback_data=f"payview:{payment.id}")
+    kb.adjust(1)
     return kb.as_markup()

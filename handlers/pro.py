@@ -10,19 +10,19 @@ from broadcaster import start_broadcast, stop_broadcast
 from config import (
     ADMIN_ID,
     BOT_BRAND,
-    PAYMENT_CARD,
-    PAYMENT_OWNER,
     SUBSCRIPTION_DAYS,
-    SUBSCRIPTION_PRICE,
     WELCOME_STICKER_ID,
 )
 from keyboards import (
+    admin_menu_kb,
     dialog_pick_kb,
     group_delete_kb,
     groups_kb,
     interval_kb,
     main_menu_kb,
     payment_admin_kb,
+    payment_settings_kb,
+    pending_payments_kb,
     phone_kb,
     profile_kb,
     settings_kb,
@@ -32,12 +32,17 @@ from repository import (
     add_group,
     create_pending_payment,
     ensure_user,
+    get_admin_stats,
+    get_payment_config,
     get_pending_payment,
     get_settings,
     get_user_account,
     has_active_subscription,
+    list_pending_payments,
     list_groups,
+    list_user_ids,
     remove_group,
+    set_bot_config,
     set_interval,
     set_message_text,
     set_payment_status,
@@ -56,6 +61,14 @@ def _key(message: Message | CallbackQuery) -> str:
 
 def _format_until(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d %H:%M") if value else "yo'q"
+
+
+def _is_admin(message: Message | CallbackQuery) -> bool:
+    return bool(message.from_user and message.from_user.id == ADMIN_ID)
+
+
+def _main_kb(message: Message | CallbackQuery):
+    return main_menu_kb(_is_admin(message))
 
 
 async def _show_home(message: Message):
@@ -82,17 +95,18 @@ async def _show_home(message: Message):
             "3. 💬 Xabar yozish\n"
             "4. 🚀 Start / Stop"
         )
-    await message.answer(text, reply_markup=main_menu_kb())
+    await message.answer(text, reply_markup=_main_kb(message))
 
 
 async def _show_payment_request(message: Message, state: FSMContext):
+    payment_config = await get_payment_config()
     await state.set_state(AdStates.waiting_payment_receipt)
     await message.answer(
         "🔒 Bu bo'lim obuna bilan ishlaydi.\n\n"
         f"💳 Obuna: {SUBSCRIPTION_DAYS} kun\n"
-        f"📌 Narxi: {SUBSCRIPTION_PRICE}\n"
-        f"💳 Karta: {PAYMENT_CARD}\n"
-        f"👤 Egasi: {PAYMENT_OWNER}\n\n"
+        f"📌 Narxi: {payment_config['price']}\n"
+        f"💳 Karta: {payment_config['card']}\n"
+        f"👤 Egasi: {payment_config['owner']}\n\n"
         "✅ To'lov qilgach, chekni rasm yoki fayl qilib shu chatga yuboring."
     )
 
@@ -103,6 +117,221 @@ async def cmd_start(message: Message):
     if WELCOME_STICKER_ID:
         await message.answer_sticker(WELCOME_STICKER_ID)
     await _show_home(message)
+
+
+async def _show_admin_panel(message: Message):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    await message.answer("🛠 Admin panel\n\nKerakli bo'limni tanlang.", reply_markup=admin_menu_kb())
+
+
+@router.message(Command("admin"))
+async def admin_command(message: Message):
+    await _show_admin_panel(message)
+
+
+@router.message(F.text.in_({"🛠 Admin panel", "Admin panel"}))
+async def admin_button(message: Message):
+    await _show_admin_panel(message)
+
+
+@router.message(F.text.in_({"📊 Statistika", "Statistika"}))
+async def admin_stats(message: Message):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    stats = await get_admin_stats()
+    await message.answer(
+        "📊 Statistika\n\n"
+        f"👤 Foydalanuvchilar: {stats['users']}\n"
+        f"🔗 Profil ulangan: {stats['linked']}\n"
+        f"👥 Saqlangan guruhlar: {stats['groups']}\n"
+        f"🎟 Aktiv obunalar: {stats['active_subs']}\n"
+        f"💳 Kutilayotgan to'lovlar: {stats['pending_payments']}\n"
+        f"✅ Tasdiqlangan to'lovlar: {stats['approved_payments']}",
+        reply_markup=admin_menu_kb(),
+    )
+
+
+@router.message(F.text.in_({"💳 To'lovlar", "To'lovlar"}))
+async def admin_payments(message: Message):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    payments = await list_pending_payments()
+    if not payments:
+        await message.answer("✅ Kutilayotgan to'lov yo'q.", reply_markup=admin_menu_kb())
+        return
+    await message.answer("💳 Kutilayotgan to'lovlar:", reply_markup=pending_payments_kb(payments))
+
+
+@router.callback_query(F.data.startswith("payview:"))
+async def view_payment(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Ruxsat yo'q.", show_alert=True)
+        return
+    payment_id = int(callback.data.split(":")[1])
+    payment = await get_pending_payment(payment_id)
+    if not payment:
+        await callback.answer("To'lov topilmadi.", show_alert=True)
+        return
+    caption = (
+        "💳 To'lov cheki\n\n"
+        f"Payment: {payment.id}\n"
+        f"User ID: {payment.user_id}\n"
+        f"Status: {payment.status}"
+    )
+    if payment.file_type == "photo":
+        await callback.bot.send_photo(ADMIN_ID, payment.file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
+    else:
+        await callback.bot.send_document(ADMIN_ID, payment.file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
+    await callback.answer("Yuborildi")
+
+
+@router.message(F.text.in_({"📢 E'lon yuborish", "E'lon yuborish"}))
+async def ask_admin_broadcast(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    await state.set_state(AdStates.waiting_admin_broadcast)
+    await message.answer("📢 Hamma userlarga yuboriladigan xabar matnini yuboring.")
+
+
+@router.message(AdStates.waiting_admin_broadcast)
+async def send_admin_broadcast(message: Message, state: FSMContext, bot: Bot):
+    if not _is_admin(message):
+        await state.clear()
+        return
+    text = message.html_text or message.text
+    if not text:
+        await message.answer("Matn yuboring.")
+        return
+    sent = 0
+    failed = 0
+    for user_id in await list_user_ids():
+        try:
+            await bot.send_message(user_id, text)
+            sent += 1
+        except Exception:
+            failed += 1
+    await state.clear()
+    await message.answer(f"✅ E'lon yuborildi.\n\nYuborildi: {sent}\nYetib bormadi: {failed}", reply_markup=admin_menu_kb())
+
+
+@router.message(F.text.in_({"🎟 Obuna berish", "Obuna berish"}))
+async def ask_sub_user(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    await state.set_state(AdStates.waiting_admin_sub_user)
+    await message.answer("🎟 Obuna beriladigan user ID ni yuboring.")
+
+
+@router.message(AdStates.waiting_admin_sub_user)
+async def receive_sub_user(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await state.clear()
+        return
+    user_id_text = re.sub(r"\D", "", message.text or "")
+    if not user_id_text:
+        await message.answer("User ID faqat raqam bo'lishi kerak.")
+        return
+    await state.update_data(sub_user_id=int(user_id_text))
+    await state.set_state(AdStates.waiting_admin_sub_days)
+    await message.answer("Necha kun obuna beramiz? Masalan: 30")
+
+
+@router.message(AdStates.waiting_admin_sub_days)
+async def receive_sub_days(message: Message, state: FSMContext, bot: Bot):
+    if not _is_admin(message):
+        await state.clear()
+        return
+    days_text = re.sub(r"\D", "", message.text or "")
+    if not days_text or int(days_text) <= 0:
+        await message.answer("Kun sonini raqam bilan yuboring.")
+        return
+    data = await state.get_data()
+    user_id = int(data["sub_user_id"])
+    until = await activate_subscription(user_id, int(days_text))
+    await state.clear()
+    try:
+        await bot.send_message(user_id, f"✅ Admin obuna berdi.\n📅 Gacha: {_format_until(until)}", reply_markup=main_menu_kb())
+    except Exception:
+        pass
+    await message.answer(f"✅ Obuna berildi.\n\nUser ID: {user_id}\nGacha: {_format_until(until)}", reply_markup=admin_menu_kb())
+
+
+@router.message(F.text.in_({"⚙️ To'lov sozlamalari", "To'lov sozlamalari"}))
+async def admin_payment_settings(message: Message):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    payment_config = await get_payment_config()
+    await message.answer(
+        "⚙️ To'lov sozlamalari\n\n"
+        f"📌 Narx: {payment_config['price']}\n"
+        f"💳 Karta: {payment_config['card']}\n"
+        f"👤 Egasi: {payment_config['owner']}",
+        reply_markup=payment_settings_kb(),
+    )
+
+
+@router.message(F.text.in_({"📌 Narx", "Narx"}))
+async def ask_admin_price(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    await state.set_state(AdStates.waiting_admin_price)
+    await message.answer("Yangi narxni yuboring. Masalan: 30 000 so'm")
+
+
+@router.message(AdStates.waiting_admin_price)
+async def save_admin_price(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await state.clear()
+        return
+    await set_bot_config("price", (message.text or "").strip())
+    await state.clear()
+    await message.answer("✅ Narx yangilandi.", reply_markup=payment_settings_kb())
+
+
+@router.message(F.text.in_({"💳 Karta", "Karta"}))
+async def ask_admin_card(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    await state.set_state(AdStates.waiting_admin_card)
+    await message.answer("Yangi karta raqamini yuboring.")
+
+
+@router.message(AdStates.waiting_admin_card)
+async def save_admin_card(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await state.clear()
+        return
+    await set_bot_config("card", (message.text or "").strip())
+    await state.clear()
+    await message.answer("✅ Karta yangilandi.", reply_markup=payment_settings_kb())
+
+
+@router.message(F.text.in_({"👤 Karta egasi", "Karta egasi"}))
+async def ask_admin_owner(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await message.answer("Ruxsat yo'q.")
+        return
+    await state.set_state(AdStates.waiting_admin_owner)
+    await message.answer("Yangi karta egasi nomini yuboring.")
+
+
+@router.message(AdStates.waiting_admin_owner)
+async def save_admin_owner(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await state.clear()
+        return
+    await set_bot_config("owner", (message.text or "").strip())
+    await state.clear()
+    await message.answer("✅ Karta egasi yangilandi.", reply_markup=payment_settings_kb())
 
 
 @router.message(F.sticker)
