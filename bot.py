@@ -20,6 +20,7 @@ async def main():
     await init_db()
 
     bot = Bot(token=BOT_TOKEN)
+    await bot.set_my_name(name=BOT_BRAND)
     await bot.set_my_commands([
         BotCommand(command="start", description="Botni ochish"),
     ])
