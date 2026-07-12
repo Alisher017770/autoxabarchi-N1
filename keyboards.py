@@ -124,7 +124,8 @@ def admin_menu_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="👥 Фойдаланувчилар")],
             [KeyboardButton(text="💳 Тўловлар")],
-            [KeyboardButton(text="🎟 Обуна бериш"), KeyboardButton(text="📢 Эълон юбориш")],
+            [KeyboardButton(text="🎟 Обуна бериш"), KeyboardButton(text="🚫 Обунани ўчириш")],
+            [KeyboardButton(text="📢 Эълон юбориш")],
             [KeyboardButton(text="⚙️ Тўлов созламалари")],
             [KeyboardButton(text="⬅️ Орқага")],
         ],

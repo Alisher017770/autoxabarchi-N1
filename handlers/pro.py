@@ -44,6 +44,7 @@ from repository import (
     list_user_ids,
     list_user_summaries,
     remove_group,
+    revoke_subscription,
     set_bot_config,
     set_interval,
     set_message_text,
@@ -424,6 +425,51 @@ async def receive_sub_days(message: Message, state: FSMContext, bot: Bot):
     except Exception:
         pass
     await message.answer(f"✅ Обуна берилди.\n\nФойдаланувчи айди: {user_id}\nГача: {_format_until(until)}", reply_markup=admin_menu_kb())
+
+
+@router.message(F.text.in_({"🚫 Обунани ўчириш", "Обунани ўчириш", "🚫 Obunani o'chirish", "Obunani o'chirish"}))
+async def ask_revoke_sub_user(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await state.set_state(AdStates.waiting_admin_revoke_sub_user)
+    await message.answer("🚫 Обунаси ўчириладиган фойдаланувчи айди рақамини юборинг.")
+
+
+@router.message(AdStates.waiting_admin_revoke_sub_user)
+async def receive_revoke_sub_user(message: Message, state: FSMContext, bot: Bot):
+    if await _cancel_admin_state(message, state):
+        return
+    if not _is_admin(message):
+        await state.clear()
+        return
+    user_id_text = re.sub(r"\D", "", message.text or "")
+    if not user_id_text:
+        await message.answer("Фойдаланувчи айди фақат рақам бўлиши керак.")
+        return
+    user_id = int(user_id_text)
+    previous_until = await revoke_subscription(user_id)
+    await stop_broadcast(str(user_id))
+    await state.clear()
+
+    account = await get_user_account(user_id)
+    try:
+        await bot.send_message(
+            user_id,
+            "🚫 Обунангиз админ томонидан ўчирилди.\n\n"
+            "Қайта ишлатиш учун «💳 Обуна бўлиш» тугмасини босинг.",
+            reply_markup=main_menu_kb(False, bool(account and account.session_string), False),
+        )
+    except Exception:
+        pass
+
+    old_text = _format_until(previous_until) if previous_until else "топилмади ёки актив эмас"
+    await message.answer(
+        f"✅ Обуна ўчирилди.\n\n"
+        f"Фойдаланувчи айди: {user_id}\n"
+        f"Олдинги муддат: {old_text}",
+        reply_markup=admin_menu_kb(),
+    )
 
 
 @router.message(F.text.in_({"⚙️ Тўлов созламалари", "Тўлов созламалари", "⚙️ To'lov sozlamalari", "To'lov sozlamalari"}))

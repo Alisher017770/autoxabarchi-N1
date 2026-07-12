@@ -10,6 +10,7 @@ class AdStates(StatesGroup):
     waiting_admin_broadcast = State()
     waiting_admin_sub_user = State()
     waiting_admin_sub_days = State()
+    waiting_admin_revoke_sub_user = State()
     waiting_admin_price = State()
     waiting_admin_card = State()
     waiting_admin_owner = State()

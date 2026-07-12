@@ -188,6 +188,18 @@ async def activate_subscription(user_id: int, days: int) -> datetime:
         return until
 
 
+async def revoke_subscription(user_id: int) -> datetime | None:
+    async with async_session() as session:
+        result = await session.execute(select(Subscription).where(Subscription.user_id == user_id))
+        subscription = result.scalar_one_or_none()
+        if subscription is None:
+            return None
+        previous_until = subscription.active_until
+        subscription.active_until = None
+        await session.commit()
+        return previous_until
+
+
 async def create_pending_payment(user_id: int, file_id: str, file_type: str) -> PendingPayment:
     async with async_session() as session:
         payment = PendingPayment(user_id=user_id, file_id=file_id, file_type=file_type)
