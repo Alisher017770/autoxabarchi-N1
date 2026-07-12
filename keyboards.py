@@ -45,6 +45,7 @@ def groups_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="➕ Guruh qo'shish"), KeyboardButton(text="📋 Guruhlar ro'yxati")],
+            [KeyboardButton(text="✅ Barcha guruhlarni qo'shish")],
             [KeyboardButton(text="🗑 Guruh o'chirish")],
             [KeyboardButton(text="⬅️ Orqaga")],
         ],
@@ -92,6 +93,7 @@ def manual_interval_kb() -> ReplyKeyboardMarkup:
 
 def dialog_pick_kb(dialogs: list[dict]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Barchasini qo'shish", callback_data="addallgroups")
     for dialog in dialogs:
         kb.button(text=f"👥 {dialog['title'][:35]}", callback_data=f"addgroup:{dialog['chat_id']}")
     kb.adjust(1)

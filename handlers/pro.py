@@ -97,10 +97,12 @@ async def _show_home(message: Message):
     until = await subscription_until(user.id)
 
     if account and account.session_string:
+        readiness, _ = await _readiness_text(user.id)
         text = (
             f"✅ {user.first_name}, Telegram akkauntingiz ulangan.\n\n"
             f"💳 Obuna: {_format_until(until)}\n"
-            "Kerakli bo'limni tanlang."
+            "Kerakli bo'limni tanlang.\n\n"
+            f"{readiness}"
         )
     else:
         text = (
@@ -128,6 +130,48 @@ async def _show_payment_request(message: Message, state: FSMContext):
         f"👤 Egasi: {payment_config['owner']}\n\n"
         "✅ To'lov qilgach, chekni rasm yoki fayl qilib shu chatga yuboring."
     )
+
+
+async def _readiness_text(user_id: int) -> tuple[str, bool]:
+    profile = user_profile_key(user_id)
+    account = await get_user_account(user_id)
+    groups = await list_groups(profile)
+    settings_row = await get_settings(profile)
+    subscribed = await has_active_subscription(user_id)
+
+    ok_profile = bool(account and account.session_string)
+    ok_groups = bool(groups)
+    ok_message = bool(settings_row.message_text)
+    ok_subscription = subscribed
+    ready = ok_profile and ok_groups and ok_message and ok_subscription
+
+    def mark(value: bool) -> str:
+        return "✅" if value else "❌"
+
+    text = (
+        "📋 Tayyorlik tekshiruvi\n\n"
+        f"{mark(ok_profile)} Profil ulangan\n"
+        f"{mark(ok_groups)} Guruhlar: {len(groups)} ta\n"
+        f"{mark(ok_message)} Xabar yozilgan\n"
+        f"{mark(ok_subscription)} Obuna aktiv\n"
+        f"⏱ Tezlik: har {_interval_label(settings_row.interval_minutes)}\n\n"
+    )
+    if ready:
+        text += "Hammasi tayyor. Start / Stop bosilsa xabar yuborish boshlanadi."
+    elif not ok_profile:
+        text += "1-qadam: Profil ulash tugmasini bosing."
+    elif not ok_groups:
+        text += "2-qadam: Guruhlar bo'limidan guruh qo'shing."
+    elif not ok_message:
+        text += "3-qadam: Xabar yozish bo'limidan xabar matnini kiriting."
+    else:
+        text += "4-qadam: Obunani faollashtiring."
+    return text, ready
+
+
+async def _send_next_step(message: Message):
+    text, ready = await _readiness_text(message.from_user.id)
+    await message.answer(text, reply_markup=await _main_kb(message))
 
 
 @router.message(Command("start"))
@@ -468,8 +512,11 @@ async def receive_code(message: Message, state: FSMContext):
         return
 
     await state.clear()
-    await message.answer("✅ Profil ulandi.", reply_markup=await _main_kb(message))
-    await _show_home(message)
+    await message.answer(
+        "✅ Profil ulandi.\n\n"
+        "2-qadam: guruh qo'shing. Pastdagi Guruh qo'shish tugmasini bosing.",
+        reply_markup=groups_kb(),
+    )
 
 
 @router.message(AdStates.waiting_login_password)
@@ -480,8 +527,11 @@ async def receive_password(message: Message, state: FSMContext):
         await message.answer(f"❌ Parol qabul qilinmadi: {exc}")
         return
     await state.clear()
-    await message.answer("✅ Profil ulandi.", reply_markup=await _main_kb(message))
-    await _show_home(message)
+    await message.answer(
+        "✅ Profil ulandi.\n\n"
+        "2-qadam: guruh qo'shing. Pastdagi Guruh qo'shish tugmasini bosing.",
+        reply_markup=groups_kb(),
+    )
 
 
 @router.message(F.text.in_({"👥 Guruhlar", "Guruhlar"}))
@@ -515,6 +565,26 @@ async def groups_add(message: Message):
     await message.answer("➕ Qaysi guruhni qo'shamiz?", reply_markup=dialog_pick_kb(new_dialogs[:30]))
 
 
+@router.message(F.text.in_({"✅ Barcha guruhlarni qo'shish", "Barcha guruhlarni qo'shish"}))
+async def groups_add_all(message: Message):
+    await message.answer("⏳ Guruhlar olinmoqda...")
+    try:
+        dialogs = await get_user_dialog_groups(message.from_user.id)
+    except RuntimeError as exc:
+        await message.answer(f"❌ Xato: {exc}")
+        return
+    added_count = 0
+    for dialog in dialogs:
+        if await add_group(_key(message), dialog["chat_id"], dialog["title"]):
+            added_count += 1
+    groups = await list_groups(_key(message))
+    await message.answer(
+        f"✅ {added_count} ta yangi guruh qo'shildi. Jami: {len(groups)} ta.\n\n"
+        "3-qadam: endi yuboriladigan xabar matnini yozing.",
+        reply_markup=await _main_kb(message),
+    )
+
+
 @router.callback_query(F.data.startswith("addgroup:"))
 async def add_group_cb(callback: CallbackQuery):
     chat_id = int(callback.data.split(":")[1])
@@ -523,7 +593,32 @@ async def add_group_cb(callback: CallbackQuery):
     added = await add_group(user_profile_key(callback.from_user.id), chat_id, title)
     await callback.answer("Qo'shildi" if added else "Allaqachon bor")
     groups = await list_groups(user_profile_key(callback.from_user.id))
-    await callback.message.answer(f"✅ {len(groups)} ta guruh saqlandi.")
+    await callback.message.answer(
+        f"✅ {len(groups)} ta guruh saqlandi.\n\n"
+        "3-qadam: endi Xabar yozish tugmasini bosing.",
+        reply_markup=main_menu_kb(callback.from_user.id == ADMIN_ID, True),
+    )
+
+
+@router.callback_query(F.data == "addallgroups")
+async def add_all_groups_cb(callback: CallbackQuery):
+    try:
+        dialogs = await get_user_dialog_groups(callback.from_user.id)
+    except RuntimeError as exc:
+        await callback.message.answer(f"❌ Xato: {exc}")
+        await callback.answer()
+        return
+    added_count = 0
+    for dialog in dialogs:
+        if await add_group(user_profile_key(callback.from_user.id), dialog["chat_id"], dialog["title"]):
+            added_count += 1
+    groups = await list_groups(user_profile_key(callback.from_user.id))
+    await callback.message.answer(
+        f"✅ {added_count} ta yangi guruh qo'shildi. Jami: {len(groups)} ta.\n\n"
+        "3-qadam: endi Xabar yozish tugmasini bosing.",
+        reply_markup=main_menu_kb(callback.from_user.id == ADMIN_ID, True),
+    )
+    await callback.answer("Qo'shildi")
 
 
 @router.message(F.text.in_({"🗑 Guruh o'chirish", "Guruh o'chirish"}))
@@ -557,7 +652,18 @@ async def save_message(message: Message, state: FSMContext):
         return
     await set_message_text(_key(message), text)
     await state.clear()
-    await message.answer("✅ Xabar saqlandi.", reply_markup=await _main_kb(message))
+    preview = text
+    if len(preview) > 700:
+        preview = preview[:700] + "..."
+    await message.answer(
+        "✅ Xabar saqlandi.\n\n"
+        "Ko'rinishi:\n"
+        "----------------\n"
+        f"{preview}\n"
+        "----------------",
+        reply_markup=await _main_kb(message),
+    )
+    await _send_next_step(message)
 
 
 @router.message(F.text.in_({"⚙️ Sozlamalar", "Sozlamalar"}))
@@ -623,20 +729,27 @@ async def start_or_stop(message: Message, state: FSMContext):
 
     account = await get_user_account(message.from_user.id)
     if not account or not account.session_string:
-        await message.answer("❌ Avval Profil ulash bo'limidan Telegram akkauntingizni ulang.")
+        text, _ = await _readiness_text(message.from_user.id)
+        await message.answer(text, reply_markup=await _main_kb(message))
         return
     if not await has_active_subscription(message.from_user.id):
+        text, _ = await _readiness_text(message.from_user.id)
+        await message.answer(text, reply_markup=await _main_kb(message))
         await _show_payment_request(message, state)
         return
 
     groups = await list_groups(profile)
     if not settings_row.message_text:
-        await message.answer("❌ Saqlangan xabar yo'q. Avval Xabar yozish bo'limidan matn kiriting.")
+        text, _ = await _readiness_text(message.from_user.id)
+        await message.answer(text, reply_markup=await _main_kb(message))
         return
     if not groups:
-        await message.answer("❌ Guruh qo'shilmagan. Avval Guruhlar bo'limidan guruh qo'shing.")
+        text, _ = await _readiness_text(message.from_user.id)
+        await message.answer(text, reply_markup=groups_kb())
         return
 
+    text, _ = await _readiness_text(message.from_user.id)
+    await message.answer(text, reply_markup=await _main_kb(message))
     await start_broadcast(profile)
     await message.answer(
         "🚀 Ishga tushirildi.\n\n"
