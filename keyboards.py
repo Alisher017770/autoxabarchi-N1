@@ -113,8 +113,8 @@ def group_delete_kb(groups: list) -> InlineKeyboardMarkup:
 
 def payment_admin_kb(payment_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Tasdiqlash", callback_data=f"payok:{payment_id}")
-    kb.button(text="❌ Rad etish", callback_data=f"payno:{payment_id}")
+    kb.button(text="✅ Тасдиқлаш", callback_data=f"payok:{payment_id}")
+    kb.button(text="❌ Рад этиш", callback_data=f"payno:{payment_id}")
     kb.adjust(2)
     return kb.as_markup()
 
@@ -122,11 +122,11 @@ def payment_admin_kb(payment_id: int) -> InlineKeyboardMarkup:
 def admin_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="👥 Userlar")],
-            [KeyboardButton(text="💳 To'lovlar")],
-            [KeyboardButton(text="🎟 Obuna berish"), KeyboardButton(text="📢 E'lon yuborish")],
-            [KeyboardButton(text="⚙️ To'lov sozlamalari")],
-            [KeyboardButton(text="⬅️ Orqaga")],
+            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="👥 Фойдаланувчилар")],
+            [KeyboardButton(text="💳 Тўловлар")],
+            [KeyboardButton(text="🎟 Обуна бериш"), KeyboardButton(text="📢 Эълон юбориш")],
+            [KeyboardButton(text="⚙️ Тўлов созламалари")],
+            [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,
     )
@@ -135,9 +135,9 @@ def admin_menu_kb() -> ReplyKeyboardMarkup:
 def payment_settings_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📌 Narx"), KeyboardButton(text="💳 Karta")],
-            [KeyboardButton(text="👤 Karta egasi")],
-            [KeyboardButton(text="🛠 Admin panel")],
+            [KeyboardButton(text="📌 Нарх"), KeyboardButton(text="💳 Карта")],
+            [KeyboardButton(text="👤 Карта эгаси")],
+            [KeyboardButton(text="🛠 Админ панел")],
         ],
         resize_keyboard=True,
     )

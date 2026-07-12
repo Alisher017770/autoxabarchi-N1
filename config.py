@@ -12,7 +12,7 @@ def _int_env(name: str) -> int:
     try:
         return int(value)
     except ValueError as exc:
-        raise RuntimeError(f"{name} butun son bo'lishi kerak.") from exc
+        raise RuntimeError(f"{name} бутун сон бўлиши керак.") from exc
 
 
 ADMIN_ID = _int_env("ADMIN_ID")
@@ -40,8 +40,10 @@ REST_EVERY_MINUTES = int(os.getenv("REST_EVERY_MINUTES", "360"))
 REST_DURATION_MINUTES = int(os.getenv("REST_DURATION_MINUTES", "20"))
 MAX_RUN_MINUTES = int(os.getenv("MAX_RUN_MINUTES", "720"))
 SUBSCRIPTION_DAYS = int(os.getenv("SUBSCRIPTION_DAYS", "30"))
-BOT_BRAND = os.getenv("BOT_BRAND", "Auto xabarchi N1 bot")
-SUBSCRIPTION_PRICE = os.getenv("SUBSCRIPTION_PRICE", "30 000 so'm")
+BOT_BRAND = os.getenv("BOT_BRAND", "Авто хабарчи N1 бот")
+if BOT_BRAND == "Auto xabarchi N1 bot":
+    BOT_BRAND = "Авто хабарчи N1 бот"
+SUBSCRIPTION_PRICE = os.getenv("SUBSCRIPTION_PRICE", "30 000 сўм")
 PAYMENT_CARD = os.getenv("PAYMENT_CARD", "5614 6824 1042 4388")
 PAYMENT_OWNER = os.getenv("PAYMENT_OWNER", "R.M")
 BASE_DIR = Path(__file__).resolve().parent
@@ -64,7 +66,7 @@ def validate_config() -> None:
 
     if missing:
         raise RuntimeError(
-            "Quyidagi muhit o'zgaruvchilari to'ldirilmagan: "
+            "Қуйидаги муҳит ўзгарувчилари тўлдирилмаган: "
             + ", ".join(missing)
         )
 

@@ -23,18 +23,18 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     await bot.set_my_name(name=BOT_BRAND)
     await bot.set_my_commands([
-        BotCommand(command="start", description="Botni ochish"),
+        BotCommand(command="start", description="Ботни очиш"),
     ])
     await bot.set_my_short_description(
-        short_description="Guruhlarga belgilangan intervalda avto xabar yuboradi."
+        short_description="Гуруҳларга белгиланган вақтда авто хабар юборади."
     )
     await bot.set_my_description(
         description=(
-            f"{BOT_BRAND} guruhlarga avtomatik xabar yuborishga yordam beradi.\n\n"
-            "• Telegram akkauntingiz orqali ishlaydi\n"
-            "• Faqat guruhlarni tanlaydi\n"
-            "• Interval va dam olish rejimi bor\n"
-            "• 12 soatdan keyin o'zi to'xtaydi"
+            f"{BOT_BRAND} гуруҳларга автоматик хабар юборишга ёрдам беради.\n\n"
+            "• Telegram аккаунтингиз орқали ишлайди\n"
+            "• Фақат гуруҳларни танлайди\n"
+            "• Вақт ва дам олиш режими бор\n"
+            "• 12 соатдан кейин ўзи тўхтайди"
         )
     )
     dp = Dispatcher(storage=MemoryStorage())
@@ -45,7 +45,7 @@ async def main():
     monitor_task = asyncio.create_task(subscription_monitor(bot))
 
     try:
-        logger.info("Bot ishga tushdi")
+        logger.info("Бот ишга тушди")
         await dp.start_polling(bot)
     finally:
         monitor_task.cancel()

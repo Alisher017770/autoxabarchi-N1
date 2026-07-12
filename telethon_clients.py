@@ -51,14 +51,14 @@ async def confirm_login_code(user_id: int, code: str) -> bool:
     client = _login_clients.get(user_id)
     phone = _login_phones.get(user_id)
     if not client or not phone:
-        raise RuntimeError("Login jarayoni topilmadi. Qaytadan urinib ko'ring.")
+        raise RuntimeError("Кириш жараёни топилмади. Қайтадан уриниб кўринг.")
 
     try:
         await client.sign_in(phone=phone, code=code)
     except SessionPasswordNeededError:
         return False
     except PhoneCodeInvalidError as exc:
-        raise RuntimeError("Kod noto'g'ri. Qayta tekshirib yuboring.") from exc
+        raise RuntimeError("Код нотўғри. Қайта текшириб юборинг.") from exc
 
     await save_user_session(user_id, phone, client.session.save())
     _clients[user_id] = client
@@ -71,7 +71,7 @@ async def confirm_login_password(user_id: int, password: str):
     client = _login_clients.get(user_id)
     phone = _login_phones.get(user_id)
     if not client or not phone:
-        raise RuntimeError("Login jarayoni topilmadi. Qaytadan urinib ko'ring.")
+        raise RuntimeError("Кириш жараёни топилмади. Қайтадан уриниб кўринг.")
 
     await client.sign_in(password=password)
     await save_user_session(user_id, phone, client.session.save())
@@ -94,7 +94,7 @@ async def get_user_client(user_id: int) -> TelegramClient:
 
     session_str = await get_user_session(user_id)
     if not session_str:
-        raise RuntimeError("Hozircha profil ulanmagan. Avval Profil bo'limidan ulang.")
+        raise RuntimeError("Ҳозирча профил уланмаган. Аввал «Профил улаш» бўлимидан уланг.")
 
     client = _new_client(session_str)
     try:
@@ -102,14 +102,14 @@ async def get_user_client(user_id: int) -> TelegramClient:
         authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=CONNECT_TIMEOUT_SECONDS)
     except asyncio.TimeoutError as exc:
         await client.disconnect()
-        raise RuntimeError("Telegram akkauntiga ulanish vaqti tugadi. Keyinroq qayta urinib ko'ring.") from exc
+        raise RuntimeError("Telegram аккаунтига уланиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
     except AuthKeyNotFound as exc:
         await client.disconnect()
-        raise RuntimeError("StringSession eskirgan yoki noto'g'ri. Profilni qayta ulang.") from exc
+        raise RuntimeError("Сессия эскирган ёки нотўғри. Профилни қайта уланг.") from exc
 
     if not authorized:
         await client.disconnect()
-        raise RuntimeError("Profil avtorizatsiyadan o'tmagan. Profilni qayta ulang.")
+        raise RuntimeError("Профил авторизациядан ўтмаган. Профилни қайта уланг.")
 
     _clients[user_id] = client
     return client
@@ -124,7 +124,7 @@ async def get_user_dialog_groups(user_id: int, limit: int = 50) -> list[dict]:
                 if dialog.is_group:
                     groups.append({"chat_id": dialog.id, "title": dialog.name})
     except TimeoutError as exc:
-        raise RuntimeError("Guruhlar ro'yxatini olish vaqti tugadi. Keyinroq qayta urinib ko'ring.") from exc
+        raise RuntimeError("Гуруҳлар рўйхатини олиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
     return groups
 
 

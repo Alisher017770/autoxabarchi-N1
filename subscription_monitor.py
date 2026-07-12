@@ -33,7 +33,7 @@ async def check_subscriptions(bot: Bot):
                 reply_markup=main_menu_kb(False, True, True),
             )
         except Exception:
-            logger.exception("[%s] obuna eslatmasi yuborilmadi", subscription.user_id)
+            logger.exception("[%s] обуна эслатмаси юборилмади", subscription.user_id)
         await mark_subscription_reminded(subscription.user_id, subscription.active_until)
 
     for subscription in await list_expired_subscriptions_for_notice():
@@ -48,7 +48,7 @@ async def check_subscriptions(bot: Bot):
                 reply_markup=main_menu_kb(False, True, False),
             )
         except Exception:
-            logger.exception("[%s] obuna tugash xabari yuborilmadi", subscription.user_id)
+            logger.exception("[%s] обуна тугаш хабари юборилмади", subscription.user_id)
         await mark_subscription_expired_notice(subscription.user_id, subscription.active_until)
 
 
@@ -57,5 +57,5 @@ async def subscription_monitor(bot: Bot):
         try:
             await check_subscriptions(bot)
         except Exception:
-            logger.exception("Obuna monitorida xato")
+            logger.exception("Обуна мониторда хато")
         await asyncio.sleep(60 * 60)
