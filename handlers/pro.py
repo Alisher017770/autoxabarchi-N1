@@ -20,6 +20,7 @@ from keyboards import (
     groups_kb,
     interval_kb,
     main_menu_kb,
+    manual_interval_kb,
     payment_admin_kb,
     payment_settings_kb,
     pending_payments_kb,
@@ -62,6 +63,10 @@ def _key(message: Message | CallbackQuery) -> str:
 
 def _format_until(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d %H:%M") if value else "yo'q"
+
+
+def _interval_label(minutes: int) -> str:
+    return f"{minutes} daqiqa" if minutes < 60 else f"{minutes // 60} soat"
 
 
 def _is_admin(message: Message | CallbackQuery) -> bool:
@@ -558,7 +563,7 @@ async def save_message(message: Message, state: FSMContext):
 async def settings(message: Message):
     current = await get_settings(_key(message))
     await message.answer(
-        f"⚙️ Sozlamalar\n\n⏱ Interval: {current.interval_minutes} daqiqa",
+        f"⚙️ Sozlamalar\n\n⏱ Xabar yuborish tezligi: {_interval_label(current.interval_minutes)}",
         reply_markup=settings_kb(),
     )
 
@@ -567,9 +572,35 @@ async def settings(message: Message):
 async def show_interval(message: Message):
     settings_row = await get_settings(_key(message))
     await message.answer(
-        f"⏱ Interval sozlamasi\n\nHozirgi interval: {settings_row.interval_minutes} daqiqa",
+        "⏱ Xabar yuborish tezligini tanlang:\n\n"
+        f"Hozirgi: {_interval_label(settings_row.interval_minutes)}\n\n"
+        "⚡ Tez - har 5 daqiqa\n"
+        "✅ O'rtacha - har 15 daqiqa\n"
+        "🐢 Sekin - har 30 daqiqa\n\n"
+        "Bot xavfsizlik uchun har 6 soatda 20 daqiqa dam oladi va 12 soatdan keyin o'zi to'xtaydi.",
         reply_markup=interval_kb(),
     )
+
+
+@router.message(F.text.in_({"⚡ Tez - 5 daqiqa", "✅ O'rtacha - 15 daqiqa", "🐢 Sekin - 30 daqiqa"}))
+async def set_interval_preset(message: Message):
+    presets = {
+        "⚡ Tez - 5 daqiqa": 5,
+        "✅ O'rtacha - 15 daqiqa": 15,
+        "🐢 Sekin - 30 daqiqa": 30,
+    }
+    minutes = presets[message.text]
+    await set_interval(_key(message), minutes)
+    await message.answer(
+        f"✅ Tezlik tanlandi: {_interval_label(minutes)}\n\n"
+        "Endi Start / Stop bosib ishga tushirishingiz mumkin.",
+        reply_markup=settings_kb(),
+    )
+
+
+@router.message(F.text.in_({"⚙️ Qo'lda tanlash", "Qo'lda tanlash"}))
+async def show_manual_interval(message: Message):
+    await message.answer("⚙️ Qo'lda interval tanlang:", reply_markup=manual_interval_kb())
 
 
 @router.message(F.text.regexp(r"^(⏱ )?\d+ (daqiqa|soat)$"))
@@ -577,8 +608,7 @@ async def set_interval_message(message: Message):
     number = int(re.search(r"\d+", message.text or "").group())
     minutes = number * 60 if "soat" in message.text else number
     await set_interval(_key(message), minutes)
-    label = f"{minutes} daqiqa" if minutes < 60 else f"{minutes // 60} soat"
-    await message.answer(f"✅ Interval yangilandi: {label}", reply_markup=settings_kb())
+    await message.answer(f"✅ Tezlik yangilandi: {_interval_label(minutes)}", reply_markup=settings_kb())
 
 
 @router.message(F.text.in_({"🚀 Start / Stop", "Start / Stop"}))
@@ -609,6 +639,7 @@ async def start_or_stop(message: Message, state: FSMContext):
     await start_broadcast(profile)
     await message.answer(
         "🚀 Ishga tushirildi.\n\n"
+        f"⏱ Tezlik: har {_interval_label(settings_row.interval_minutes)}\n"
         "⏸ Har 6 soatda 20 daqiqa dam oladi.\n"
         "⏹ 12 soatdan keyin avtomatik to'xtaydi. Qayta boshlash uchun Start / Stop ni bosing.",
         reply_markup=main_menu_kb(),

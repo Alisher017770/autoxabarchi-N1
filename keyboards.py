@@ -61,6 +61,19 @@ def settings_kb() -> ReplyKeyboardMarkup:
 
 
 def interval_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⚡ Tez - 5 daqiqa")],
+            [KeyboardButton(text="✅ O'rtacha - 15 daqiqa")],
+            [KeyboardButton(text="🐢 Sekin - 30 daqiqa")],
+            [KeyboardButton(text="⚙️ Qo'lda tanlash")],
+            [KeyboardButton(text="⬅️ Orqaga")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def manual_interval_kb() -> ReplyKeyboardMarkup:
     rows = []
     row = []
     for minutes in INTERVAL_OPTIONS:
