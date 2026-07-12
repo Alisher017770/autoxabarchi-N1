@@ -4,13 +4,15 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import INTERVAL_OPTIONS
 
 
-def main_menu_kb(is_admin: bool = False) -> ReplyKeyboardMarkup:
-    keyboard = [
-        [KeyboardButton(text="👤 Profil ulash")],
+def main_menu_kb(is_admin: bool = False, profile_linked: bool = False) -> ReplyKeyboardMarkup:
+    keyboard = []
+    if not profile_linked:
+        keyboard.append([KeyboardButton(text="👤 Profil ulash")])
+    keyboard.extend([
         [KeyboardButton(text="👥 Guruhlar"), KeyboardButton(text="💬 Xabar yozish")],
         [KeyboardButton(text="🚀 Start / Stop")],
         [KeyboardButton(text="⚙️ Sozlamalar")],
-    ]
+    ])
     if is_admin:
         keyboard.append([KeyboardButton(text="🛠 Admin panel")])
     return ReplyKeyboardMarkup(

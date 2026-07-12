@@ -73,8 +73,9 @@ def _is_admin(message: Message | CallbackQuery) -> bool:
     return bool(message.from_user and message.from_user.id == ADMIN_ID)
 
 
-def _main_kb(message: Message | CallbackQuery):
-    return main_menu_kb(_is_admin(message))
+async def _main_kb(message: Message | CallbackQuery):
+    account = await get_user_account(message.from_user.id)
+    return main_menu_kb(_is_admin(message), bool(account and account.session_string))
 
 
 def _is_back_text(message: Message) -> bool:
@@ -113,7 +114,7 @@ async def _show_home(message: Message):
             "3. 💬 Xabar yozish\n"
             "4. 🚀 Start / Stop"
         )
-    await message.answer(text, reply_markup=_main_kb(message))
+    await message.answer(text, reply_markup=await _main_kb(message))
 
 
 async def _show_payment_request(message: Message, state: FSMContext):
@@ -405,9 +406,9 @@ async def profile(message: Message):
     account = await get_user_account(message.from_user.id)
     if account and account.session_string:
         await message.answer(
-            "✅ Telegram akkauntingiz ulangan.\n"
-            "Qayta ulash kerak bo'lsa telefon orqali ulang.",
-            reply_markup=profile_kb(),
+            "✅ Telegram akkauntingiz allaqachon ulangan.\n\n"
+            "Endi Guruhlar, Xabar yozish va Start / Stop bo'limlaridan foydalaning.",
+            reply_markup=await _main_kb(message),
         )
     else:
         await message.answer("👤 Profil ulash usulini tanlang:", reply_markup=profile_kb())
@@ -467,7 +468,7 @@ async def receive_code(message: Message, state: FSMContext):
         return
 
     await state.clear()
-    await message.answer("✅ Profil ulandi.", reply_markup=main_menu_kb())
+    await message.answer("✅ Profil ulandi.", reply_markup=await _main_kb(message))
     await _show_home(message)
 
 
@@ -479,7 +480,7 @@ async def receive_password(message: Message, state: FSMContext):
         await message.answer(f"❌ Parol qabul qilinmadi: {exc}")
         return
     await state.clear()
-    await message.answer("✅ Profil ulandi.", reply_markup=main_menu_kb())
+    await message.answer("✅ Profil ulandi.", reply_markup=await _main_kb(message))
     await _show_home(message)
 
 
@@ -556,7 +557,7 @@ async def save_message(message: Message, state: FSMContext):
         return
     await set_message_text(_key(message), text)
     await state.clear()
-    await message.answer("✅ Xabar saqlandi.", reply_markup=main_menu_kb())
+    await message.answer("✅ Xabar saqlandi.", reply_markup=await _main_kb(message))
 
 
 @router.message(F.text.in_({"⚙️ Sozlamalar", "Sozlamalar"}))
@@ -617,7 +618,7 @@ async def start_or_stop(message: Message, state: FSMContext):
     settings_row = await get_settings(profile)
     if settings_row.is_running:
         await stop_broadcast(profile)
-        await message.answer("⏹ To'xtatildi.", reply_markup=main_menu_kb())
+        await message.answer("⏹ To'xtatildi.", reply_markup=await _main_kb(message))
         return
 
     account = await get_user_account(message.from_user.id)
@@ -642,7 +643,7 @@ async def start_or_stop(message: Message, state: FSMContext):
         f"⏱ Tezlik: har {_interval_label(settings_row.interval_minutes)}\n"
         "⏸ Har 6 soatda 20 daqiqa dam oladi.\n"
         "⏹ 12 soatdan keyin avtomatik to'xtaydi. Qayta boshlash uchun Start / Stop ni bosing.",
-        reply_markup=main_menu_kb(),
+        reply_markup=await _main_kb(message),
     )
 
 
@@ -674,7 +675,7 @@ async def receive_payment(message: Message, state: FSMContext, bot: Bot):
         await bot.send_document(ADMIN_ID, file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
 
     await state.clear()
-    await message.answer("✅ Chek adminga yuborildi. Tasdiqlanishini kuting.", reply_markup=main_menu_kb())
+    await message.answer("✅ Chek adminga yuborildi. Tasdiqlanishini kuting.", reply_markup=await _main_kb(message))
 
 
 @router.callback_query(F.data.startswith("payok:"))
