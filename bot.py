@@ -21,22 +21,25 @@ async def main():
     await init_db()
 
     bot = Bot(token=BOT_TOKEN)
-    await bot.set_my_name(name=BOT_BRAND)
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Ботни очиш"),
-    ])
-    await bot.set_my_short_description(
-        short_description="Гуруҳларга белгиланган вақтда авто хабар юборади."
-    )
-    await bot.set_my_description(
-        description=(
-            f"{BOT_BRAND} гуруҳларга автоматик хабар юборишга ёрдам беради.\n\n"
-            "• Telegram аккаунтингиз орқали ишлайди\n"
-            "• Фақат гуруҳларни танлайди\n"
-            "• Вақт ва дам олиш режими бор\n"
-            "• 12 соатдан кейин ўзи тўхтайди"
+    try:
+        await bot.set_my_name(name=BOT_BRAND)
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Ботни очиш"),
+        ])
+        await bot.set_my_short_description(
+            short_description="Гуруҳларга белгиланган вақтда авто хабар юборади."
         )
-    )
+        await bot.set_my_description(
+            description=(
+                f"{BOT_BRAND} гуруҳларга автоматик хабар юборишга ёрдам беради.\n\n"
+                "• Telegram аккаунтингиз орқали ишлайди\n"
+                "• Фақат гуруҳларни танлайди\n"
+                "• Вақт ва дам олиш режими бор\n"
+                "• 12 соатдан кейин ўзи тўхтайди"
+            )
+        )
+    except Exception as exc:
+        logger.warning("Бот профили маълумотларини янгилаб бўлмади: %s", exc)
     dp = Dispatcher(storage=MemoryStorage())
 
     dp.include_router(main_router)
