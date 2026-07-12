@@ -27,10 +27,10 @@ async def check_subscriptions(bot: Bot):
         try:
             await bot.send_message(
                 subscription.user_id,
-                "⏳ Obunangiz tugashiga 3 kundan kam vaqt qoldi.\n\n"
-                f"📅 Gacha: {_format_until(subscription.active_until)}\n"
-                "Davom ettirish uchun to'lov qiling.",
-                reply_markup=main_menu_kb(),
+                "⏳ Обунангиз тугашига 3 кундан кам вақт қолди.\n\n"
+                f"📅 Гача: {_format_until(subscription.active_until)}\n"
+                "Давом эттириш учун тўлов қилинг.",
+                reply_markup=main_menu_kb(False, True, True),
             )
         except Exception:
             logger.exception("[%s] obuna eslatmasi yuborilmadi", subscription.user_id)
@@ -43,9 +43,9 @@ async def check_subscriptions(bot: Bot):
         try:
             await bot.send_message(
                 subscription.user_id,
-                "❌ Obuna muddati tugadi.\n\n"
-                "Avto xabar yuborish to'xtatildi. Qayta ishlatish uchun obunani yangilang.",
-                reply_markup=main_menu_kb(),
+                "❌ Обуна муддати тугади.\n\n"
+                "Авто хабар юбориш тўхтатилди. Қайта ишлатиш учун обунани янгиланг.",
+                reply_markup=main_menu_kb(False, True, False),
             )
         except Exception:
             logger.exception("[%s] obuna tugash xabari yuborilmadi", subscription.user_id)

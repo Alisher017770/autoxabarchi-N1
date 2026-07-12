@@ -56,17 +56,47 @@ from telethon_clients import confirm_login_code, confirm_login_password, get_use
 
 router = Router()
 
+BACK_TEXTS = {"⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga"}
+ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel"}
+PROFILE_TEXTS = {"👤 Профил улаш", "Профил улаш", "👤 Profil ulash", "Profil ulash"}
+SUBSCRIBE_TEXTS = {"💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish"}
+PHONE_LOGIN_TEXTS = {"📱 Телефон орқали улаш", "Телефон орқали улаш", "📱 Telefon orqali ulash", "Telefon orqali ulash"}
+GROUPS_TEXTS = {"👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar"}
+GROUP_LIST_TEXTS = {"📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати", "📋 Guruhlar ro'yxati", "Guruhlar ro'yxati"}
+GROUP_ADD_TEXTS = {"➕ Гуруҳ қўшиш", "Гуруҳ қўшиш", "➕ Guruh qo'shish", "Guruh qo'shish"}
+GROUP_ADD_ALL_TEXTS = {"✅ Барча гуруҳларни қўшиш", "Барча гуруҳларни қўшиш", "✅ Barcha guruhlarni qo'shish", "Barcha guruhlarni qo'shish"}
+GROUP_DELETE_TEXTS = {"🗑 Гуруҳ ўчириш", "Гуруҳ ўчириш", "🗑 Guruh o'chirish", "Guruh o'chirish"}
+MESSAGE_TEXTS = {"💬 Хабар ёзиш", "Хабар ёзиш", "💬 Xabar yozish", "Xabar yozish"}
+SETTINGS_TEXTS = {"⚙️ Созламалар", "Созламалар", "⚙️ Sozlamalar", "Sozlamalar"}
+INTERVAL_TEXTS = {"⏱ Вақт", "Вақт", "⏱ Interval", "Interval"}
+START_STOP_TEXTS = {"🚀 Старт / Стоп", "Старт / Стоп", "🚀 Start / Stop", "Start / Stop"}
+MANUAL_INTERVAL_TEXTS = {"⚙️ Қўлда танлаш", "Қўлда танлаш", "⚙️ Qo'lda tanlash", "Qo'lda tanlash"}
+INTERVAL_PRESETS = {
+    "⚡ Тез - 5 дақиқа": 5,
+    "Тез - 5 дақиқа": 5,
+    "⚡ Tez - 5 daqiqa": 5,
+    "Tez - 5 daqiqa": 5,
+    "✅ Ўртача - 15 дақиқа": 15,
+    "Ўртача - 15 дақиқа": 15,
+    "✅ O'rtacha - 15 daqiqa": 15,
+    "O'rtacha - 15 daqiqa": 15,
+    "🐢 Секин - 30 дақиқа": 30,
+    "Секин - 30 дақиқа": 30,
+    "🐢 Sekin - 30 daqiqa": 30,
+    "Sekin - 30 daqiqa": 30,
+}
+
 
 def _key(message: Message | CallbackQuery) -> str:
     return user_profile_key(message.from_user.id)
 
 
 def _format_until(value: datetime | None) -> str:
-    return value.strftime("%Y-%m-%d %H:%M") if value else "yo'q"
+    return value.strftime("%Y-%m-%d %H:%M") if value else "йўқ"
 
 
 def _interval_label(minutes: int) -> str:
-    return f"{minutes} daqiqa" if minutes < 60 else f"{minutes // 60} soat"
+    return f"{minutes} дақиқа" if minutes < 60 else f"{minutes // 60} соат"
 
 
 def _is_admin(message: Message | CallbackQuery) -> bool:
@@ -75,11 +105,13 @@ def _is_admin(message: Message | CallbackQuery) -> bool:
 
 async def _main_kb(message: Message | CallbackQuery):
     account = await get_user_account(message.from_user.id)
-    return main_menu_kb(_is_admin(message), bool(account and account.session_string))
+    linked = bool(account and account.session_string)
+    subscribed = await has_active_subscription(message.from_user.id) if linked else False
+    return main_menu_kb(_is_admin(message), linked, subscribed)
 
 
 def _is_back_text(message: Message) -> bool:
-    return (message.text or "") in {"⬅️ Orqaga", "Orqaga", "🛠 Admin panel", "Admin panel"}
+    return (message.text or "") in BACK_TEXTS | ADMIN_PANEL_TEXTS
 
 
 async def _cancel_admin_state(message: Message, state: FSMContext) -> bool:
@@ -95,26 +127,36 @@ async def _show_home(message: Message):
     await ensure_user(user.id, user.first_name)
     account = await get_user_account(user.id)
     until = await subscription_until(user.id)
+    subscribed = await has_active_subscription(user.id)
 
     if account and account.session_string:
         readiness, _ = await _readiness_text(user.id)
-        text = (
-            f"✅ {user.first_name}, Telegram akkauntingiz ulangan.\n\n"
-            f"💳 Obuna: {_format_until(until)}\n"
-            "Kerakli bo'limni tanlang.\n\n"
-            f"{readiness}"
-        )
+        if subscribed:
+            text = (
+                f"✅ {user.first_name}, Telegram аккаунтингиз уланган.\n\n"
+                f"💳 Обуна: {_format_until(until)}\n"
+                "Керакли бўлимни танланг.\n\n"
+                f"{readiness}"
+            )
+        else:
+            text = (
+                f"✅ {user.first_name}, Telegram аккаунтингиз уланган.\n\n"
+                "2-қадам: обунани фаоллаштиринг.\n"
+                "Пастдаги «💳 Обуна бўлиш» тугмасини босинг.\n\n"
+                f"{readiness}"
+            )
     else:
         text = (
-            f"👋 Xush kelibsiz, {BOT_BRAND}!\n\n"
-            "✅ Guruhlarga avtomatik xabar yuborish\n"
-            "⏱ Belgilangan interval bilan ishlash\n"
-            "🛡 Dam olish rejimi va xavfsizroq yuborish\n\n"
-            "Boshlash uchun:\n"
-            "1. 👤 Profil ulash\n"
-            "2. 👥 Guruh qo'shish\n"
-            "3. 💬 Xabar yozish\n"
-            "4. 🚀 Start / Stop"
+            f"👋 Хуш келибсиз, {BOT_BRAND}!\n\n"
+            "✅ Гуруҳларга автоматик хабар юбориш\n"
+            "⏱ Белгиланган вақт билан ишлаш\n"
+            "🛡 Дам олиш режими билан хавфсизроқ юбориш\n\n"
+            "Бошлаш учун:\n"
+            "1. 👤 Профил улаш\n"
+            "2. 💳 Обуна бўлиш\n"
+            "3. 👥 Гуруҳ қўшиш\n"
+            "4. 💬 Хабар ёзиш\n"
+            "5. 🚀 Старт / Стоп"
         )
     await message.answer(text, reply_markup=await _main_kb(message))
 
@@ -123,12 +165,12 @@ async def _show_payment_request(message: Message, state: FSMContext):
     payment_config = await get_payment_config()
     await state.set_state(AdStates.waiting_payment_receipt)
     await message.answer(
-        "🔒 Bu bo'lim obuna bilan ishlaydi.\n\n"
-        f"💳 Obuna: {SUBSCRIPTION_DAYS} kun\n"
-        f"📌 Narxi: {payment_config['price']}\n"
-        f"💳 Karta: {payment_config['card']}\n"
-        f"👤 Egasi: {payment_config['owner']}\n\n"
-        "✅ To'lov qilgach, chekni rasm yoki fayl qilib shu chatga yuboring."
+        "🔒 Қолган бўлимлар обуна билан очилади.\n\n"
+        f"💳 Обуна: {SUBSCRIPTION_DAYS} кун\n"
+        f"📌 Нархи: {payment_config['price']}\n"
+        f"💳 Карта: {payment_config['card']}\n"
+        f"👤 Эгаси: {payment_config['owner']}\n\n"
+        "✅ Тўлов қилгач, чекни расм ёки файл қилиб шу чатга юборинг."
     )
 
 
@@ -149,23 +191,25 @@ async def _readiness_text(user_id: int) -> tuple[str, bool]:
         return "✅" if value else "❌"
 
     text = (
-        "📋 Tayyorlik tekshiruvi\n\n"
-        f"{mark(ok_profile)} Profil ulangan\n"
-        f"{mark(ok_groups)} Guruhlar: {len(groups)} ta\n"
-        f"{mark(ok_message)} Xabar yozilgan\n"
-        f"{mark(ok_subscription)} Obuna aktiv\n"
-        f"⏱ Tezlik: har {_interval_label(settings_row.interval_minutes)}\n\n"
+        "📋 Тайёрлик текшируви\n\n"
+        f"{mark(ok_profile)} Профил уланган\n"
+        f"{mark(ok_subscription)} Обуна актив\n"
+        f"{mark(ok_groups)} Гуруҳлар: {len(groups)} та\n"
+        f"{mark(ok_message)} Хабар ёзилган\n"
+        f"⏱ Вақт: ҳар {_interval_label(settings_row.interval_minutes)}\n\n"
     )
     if ready:
-        text += "Hammasi tayyor. Start / Stop bosilsa xabar yuborish boshlanadi."
+        text += "Ҳаммаси тайёр. «🚀 Старт / Стоп» босилса хабар юбориш бошланади."
     elif not ok_profile:
-        text += "1-qadam: Profil ulash tugmasini bosing."
+        text += "1-қадам: «👤 Профил улаш» тугмасини босинг."
+    elif not ok_subscription:
+        text += "2-қадам: «💳 Обуна бўлиш» тугмасини босинг."
     elif not ok_groups:
-        text += "2-qadam: Guruhlar bo'limidan guruh qo'shing."
+        text += "3-қадам: «👥 Гуруҳлар» бўлимидан гуруҳ қўшинг."
     elif not ok_message:
-        text += "3-qadam: Xabar yozish bo'limidan xabar matnini kiriting."
+        text += "4-қадам: «💬 Хабар ёзиш» бўлимидан хабар матнини киритинг."
     else:
-        text += "4-qadam: Obunani faollashtiring."
+        text += "«🚀 Старт / Стоп» тугмасини босинг."
     return text, ready
 
 
@@ -174,9 +218,26 @@ async def _send_next_step(message: Message):
     await message.answer(text, reply_markup=await _main_kb(message))
 
 
+async def _ensure_user_access(message: Message, state: FSMContext | None = None) -> bool:
+    account = await get_user_account(message.from_user.id)
+    if not account or not account.session_string:
+        await message.answer(
+            "Аввал 1-қадамни қилинг: «👤 Профил улаш» тугмасини босинг.",
+            reply_markup=await _main_kb(message),
+        )
+        return False
+    if not await has_active_subscription(message.from_user.id):
+        text, _ = await _readiness_text(message.from_user.id)
+        await message.answer(text, reply_markup=await _main_kb(message))
+        if state is not None:
+            await _show_payment_request(message, state)
+        return False
+    return True
+
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    await message.answer("⏳ Yuklanmoqda...")
+    await message.answer("⏳ Юкланмоқда...")
     if WELCOME_STICKER_ID:
         await message.answer_sticker(WELCOME_STICKER_ID)
     await _show_home(message)
@@ -184,9 +245,9 @@ async def cmd_start(message: Message):
 
 async def _show_admin_panel(message: Message):
     if not _is_admin(message):
-        await message.answer("Ruxsat yo'q.")
+        await message.answer("Рухсат йўқ.")
         return
-    await message.answer("🛠 Admin panel\n\nKerakli bo'limni tanlang.", reply_markup=admin_menu_kb())
+    await message.answer("🛠 Админ панел\n\nКеракли бўлимни танланг.", reply_markup=admin_menu_kb())
 
 
 @router.message(Command("admin"))
@@ -194,7 +255,7 @@ async def admin_command(message: Message):
     await _show_admin_panel(message)
 
 
-@router.message(F.text.in_({"🛠 Admin panel", "Admin panel"}))
+@router.message(F.text.in_(ADMIN_PANEL_TEXTS))
 async def admin_button(message: Message):
     await _show_admin_panel(message)
 
@@ -347,7 +408,11 @@ async def receive_sub_days(message: Message, state: FSMContext, bot: Bot):
     until = await activate_subscription(user_id, int(days_text))
     await state.clear()
     try:
-        await bot.send_message(user_id, f"✅ Admin obuna berdi.\n📅 Gacha: {_format_until(until)}", reply_markup=main_menu_kb())
+        await bot.send_message(
+            user_id,
+            f"✅ Админ обуна берди.\n📅 Гача: {_format_until(until)}",
+            reply_markup=main_menu_kb(False, True, True),
+        )
     except Exception:
         pass
     await message.answer(f"✅ Obuna berildi.\n\nUser ID: {user_id}\nGacha: {_format_until(until)}", reply_markup=admin_menu_kb())
@@ -439,139 +504,174 @@ async def sticker_id(message: Message):
     await message.answer("Men bu xabarni tushunmadim. /start bosing.")
 
 
-@router.message(F.text.in_({"⬅️ Orqaga", "Orqaga"}))
+@router.message(F.text.in_(BACK_TEXTS))
 async def back_home(message: Message, state: FSMContext):
     await state.clear()
     await _show_home(message)
 
 
-@router.message(F.text.in_({"👤 Profil ulash", "Profil ulash"}))
+@router.message(F.text.in_(PROFILE_TEXTS))
 async def profile(message: Message):
     account = await get_user_account(message.from_user.id)
     if account and account.session_string:
         await message.answer(
-            "✅ Telegram akkauntingiz allaqachon ulangan.\n\n"
-            "Endi Guruhlar, Xabar yozish va Start / Stop bo'limlaridan foydalaning.",
+            "✅ Telegram аккаунтингиз аллақачон уланган.\n\n"
+            "Энди 2-қадам: «💳 Обуна бўлиш» тугмасини босинг.",
             reply_markup=await _main_kb(message),
         )
     else:
-        await message.answer("👤 Profil ulash usulini tanlang:", reply_markup=profile_kb())
+        await message.answer("👤 Профил улаш усулини танланг:", reply_markup=profile_kb())
 
 
-@router.message(F.text.in_({"📱 Telefon orqali ulash", "Telefon orqali ulash"}))
+@router.message(F.text.in_(SUBSCRIBE_TEXTS))
+async def subscribe_button(message: Message, state: FSMContext):
+    account = await get_user_account(message.from_user.id)
+    if not account or not account.session_string:
+        await message.answer(
+            "Аввал 1-қадамни қилинг: «👤 Профил улаш» тугмасини босинг.",
+            reply_markup=await _main_kb(message),
+        )
+        return
+    if await has_active_subscription(message.from_user.id):
+        await message.answer("✅ Обунангиз актив. Энди қолган бўлимлар очиқ.", reply_markup=await _main_kb(message))
+        return
+    await _show_payment_request(message, state)
+
+
+@router.message(F.text.in_(PHONE_LOGIN_TEXTS))
 async def sms_login(message: Message, state: FSMContext):
     await state.set_state(AdStates.waiting_phone)
     await message.answer(
-        "📱 Telegram akkauntingizni ulash uchun telefon raqamingiz kerak.\n\n"
-        "📲 Raqamni yuborish tugmasini bosing yoki +998... formatda yozing.",
+        "📱 Telegram аккаунтингизни улаш учун телефон рақамингиз керак.\n\n"
+        "📲 «Рақамни юбориш» тугмасини босинг ёки +998... форматда ёзинг.",
         reply_markup=phone_kb(),
     )
 
 
 @router.message(AdStates.waiting_phone)
 async def receive_phone(message: Message, state: FSMContext):
+    if _is_back_text(message):
+        await state.clear()
+        await _show_home(message)
+        return
     phone = message.contact.phone_number if message.contact else (message.text or "").strip()
     if not phone.startswith("+"):
         phone = "+" + re.sub(r"\D", "", phone)
     if len(re.sub(r"\D", "", phone)) < 10:
-        await message.answer("Telefon raqamni +998... formatda yuboring.")
+        await message.answer("Телефон рақамни +998... форматда юборинг.")
         return
 
-    await message.answer("📩 Kod yuborilmoqda...")
+    await message.answer("📩 Код юборилмоқда...")
     try:
         await send_login_code(message.from_user.id, phone)
     except Exception as exc:
-        await message.answer(f"❌ Kod yuborilmadi: {exc}", reply_markup=profile_kb())
+        await message.answer(f"❌ Код юборилмади: {exc}", reply_markup=profile_kb())
         await state.clear()
         return
 
     await state.set_state(AdStates.waiting_login_code)
     await message.answer(
-        "✅ Kod yuborildi.\n\n"
-        "📩 Telegram'dan kelgan kodni yuboring.\n"
-        "Kodni nuqta bilan yozsangiz ham bo'ladi. Masalan: 54.568"
+        "✅ Код юборилди.\n\n"
+        "📩 Telegram'дан келган кодни юборинг.\n"
+        "Кодни нуқта билан ёзсангиз ҳам бўлади. Масалан: 54.568"
     )
 
 
 @router.message(AdStates.waiting_login_code)
 async def receive_code(message: Message, state: FSMContext):
+    if _is_back_text(message):
+        await state.clear()
+        await _show_home(message)
+        return
     code = re.sub(r"\D", "", message.text or "")
     if not code:
-        await message.answer("Kodni yuboring. Masalan: 54.568")
+        await message.answer("Кодни юборинг. Масалан: 54.568")
         return
 
     try:
         finished = await confirm_login_code(message.from_user.id, code)
     except Exception as exc:
-        await message.answer(f"❌ Xato: {exc}")
+        await message.answer(f"❌ Хато: {exc}")
         return
 
     if not finished:
         await state.set_state(AdStates.waiting_login_password)
-        await message.answer("🔐 Akkauntingizda 2FA parol bor. Parolni yuboring.")
+        await message.answer("🔐 Аккаунтингизда 2FA парол бор. Паролни юборинг.")
         return
 
     await state.clear()
     await message.answer(
-        "✅ Profil ulandi.\n\n"
-        "2-qadam: guruh qo'shing. Pastdagi Guruh qo'shish tugmasini bosing.",
-        reply_markup=groups_kb(),
+        "✅ Профил уланди.\n\n"
+        "2-қадам: «💳 Обуна бўлиш» тугмасини босинг.",
+        reply_markup=await _main_kb(message),
     )
 
 
 @router.message(AdStates.waiting_login_password)
 async def receive_password(message: Message, state: FSMContext):
+    if _is_back_text(message):
+        await state.clear()
+        await _show_home(message)
+        return
     try:
         await confirm_login_password(message.from_user.id, message.text or "")
     except Exception as exc:
-        await message.answer(f"❌ Parol qabul qilinmadi: {exc}")
+        await message.answer(f"❌ Парол қабул қилинмади: {exc}")
         return
     await state.clear()
     await message.answer(
-        "✅ Profil ulandi.\n\n"
-        "2-qadam: guruh qo'shing. Pastdagi Guruh qo'shish tugmasini bosing.",
-        reply_markup=groups_kb(),
+        "✅ Профил уланди.\n\n"
+        "2-қадам: «💳 Обуна бўлиш» тугмасини босинг.",
+        reply_markup=await _main_kb(message),
     )
 
 
-@router.message(F.text.in_({"👥 Guruhlar", "Guruhlar"}))
+@router.message(F.text.in_(GROUPS_TEXTS))
 async def groups_menu(message: Message):
-    await message.answer("👥 Guruhlar bo'limi:", reply_markup=groups_kb())
+    if not await _ensure_user_access(message):
+        return
+    await message.answer("👥 Гуруҳлар бўлими:", reply_markup=groups_kb())
 
 
-@router.message(F.text.in_({"📋 Guruhlar ro'yxati", "Guruhlar ro'yxati"}))
+@router.message(F.text.in_(GROUP_LIST_TEXTS))
 async def groups_list(message: Message):
+    if not await _ensure_user_access(message):
+        return
     groups = await list_groups(_key(message))
     if not groups:
-        await message.answer("Hozircha guruh qo'shilmagan.")
+        await message.answer("Ҳозирча гуруҳ қўшилмаган.")
         return
-    await message.answer("📋 Saqlangan guruhlar:\n\n" + "\n".join(f"- {group.title}" for group in groups))
+    await message.answer("📋 Сақланган гуруҳлар:\n\n" + "\n".join(f"- {group.title}" for group in groups))
 
 
-@router.message(F.text.in_({"➕ Guruh qo'shish", "Guruh qo'shish"}))
+@router.message(F.text.in_(GROUP_ADD_TEXTS))
 async def groups_add(message: Message):
-    await message.answer("⏳ Guruhlar olinmoqda...")
+    if not await _ensure_user_access(message):
+        return
+    await message.answer("⏳ Гуруҳлар олинмоқда...")
     try:
         dialogs = await get_user_dialog_groups(message.from_user.id)
     except RuntimeError as exc:
-        await message.answer(f"❌ Xato: {exc}")
+        await message.answer(f"❌ Хато: {exc}")
         return
 
     existing = {group.chat_id for group in await list_groups(_key(message))}
     new_dialogs = [dialog for dialog in dialogs if dialog["chat_id"] not in existing]
     if not new_dialogs:
-        await message.answer("Qo'shiladigan yangi guruh topilmadi.")
+        await message.answer("Қўшиладиган янги гуруҳ топилмади.")
         return
-    await message.answer("➕ Qaysi guruhni qo'shamiz?", reply_markup=dialog_pick_kb(new_dialogs[:30]))
+    await message.answer("➕ Қайси гуруҳни қўшамиз?", reply_markup=dialog_pick_kb(new_dialogs[:30]))
 
 
-@router.message(F.text.in_({"✅ Barcha guruhlarni qo'shish", "Barcha guruhlarni qo'shish"}))
+@router.message(F.text.in_(GROUP_ADD_ALL_TEXTS))
 async def groups_add_all(message: Message):
-    await message.answer("⏳ Guruhlar olinmoqda...")
+    if not await _ensure_user_access(message):
+        return
+    await message.answer("⏳ Гуруҳлар олинмоқда...")
     try:
         dialogs = await get_user_dialog_groups(message.from_user.id)
     except RuntimeError as exc:
-        await message.answer(f"❌ Xato: {exc}")
+        await message.answer(f"❌ Хато: {exc}")
         return
     added_count = 0
     for dialog in dialogs:
@@ -579,8 +679,8 @@ async def groups_add_all(message: Message):
             added_count += 1
     groups = await list_groups(_key(message))
     await message.answer(
-        f"✅ {added_count} ta yangi guruh qo'shildi. Jami: {len(groups)} ta.\n\n"
-        "3-qadam: endi yuboriladigan xabar matnini yozing.",
+        f"✅ {added_count} та янги гуруҳ қўшилди. Жами: {len(groups)} та.\n\n"
+        "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
         reply_markup=await _main_kb(message),
     )
 
@@ -591,12 +691,12 @@ async def add_group_cb(callback: CallbackQuery):
     dialogs = await get_user_dialog_groups(callback.from_user.id)
     title = next((dialog["title"] for dialog in dialogs if dialog["chat_id"] == chat_id), "Noma'lum guruh")
     added = await add_group(user_profile_key(callback.from_user.id), chat_id, title)
-    await callback.answer("Qo'shildi" if added else "Allaqachon bor")
+    await callback.answer("Қўшилди" if added else "Аллақачон бор")
     groups = await list_groups(user_profile_key(callback.from_user.id))
     await callback.message.answer(
-        f"✅ {len(groups)} ta guruh saqlandi.\n\n"
-        "3-qadam: endi Xabar yozish tugmasini bosing.",
-        reply_markup=main_menu_kb(callback.from_user.id == ADMIN_ID, True),
+        f"✅ {len(groups)} та гуруҳ сақланди.\n\n"
+        "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
+        reply_markup=main_menu_kb(callback.from_user.id == ADMIN_ID, True, True),
     )
 
 
@@ -605,7 +705,7 @@ async def add_all_groups_cb(callback: CallbackQuery):
     try:
         dialogs = await get_user_dialog_groups(callback.from_user.id)
     except RuntimeError as exc:
-        await callback.message.answer(f"❌ Xato: {exc}")
+        await callback.message.answer(f"❌ Хато: {exc}")
         await callback.answer()
         return
     added_count = 0
@@ -614,41 +714,49 @@ async def add_all_groups_cb(callback: CallbackQuery):
             added_count += 1
     groups = await list_groups(user_profile_key(callback.from_user.id))
     await callback.message.answer(
-        f"✅ {added_count} ta yangi guruh qo'shildi. Jami: {len(groups)} ta.\n\n"
-        "3-qadam: endi Xabar yozish tugmasini bosing.",
-        reply_markup=main_menu_kb(callback.from_user.id == ADMIN_ID, True),
+        f"✅ {added_count} та янги гуруҳ қўшилди. Жами: {len(groups)} та.\n\n"
+        "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
+        reply_markup=main_menu_kb(callback.from_user.id == ADMIN_ID, True, True),
     )
-    await callback.answer("Qo'shildi")
+    await callback.answer("Қўшилди")
 
 
-@router.message(F.text.in_({"🗑 Guruh o'chirish", "Guruh o'chirish"}))
+@router.message(F.text.in_(GROUP_DELETE_TEXTS))
 async def groups_delete(message: Message):
+    if not await _ensure_user_access(message):
+        return
     groups = await list_groups(_key(message))
     if not groups:
-        await message.answer("O'chiriladigan guruh yo'q.")
+        await message.answer("Ўчириладиган гуруҳ йўқ.")
         return
-    await message.answer("🗑 Qaysi guruhni o'chiramiz?", reply_markup=group_delete_kb(groups))
+    await message.answer("🗑 Қайси гуруҳни ўчирамиз?", reply_markup=group_delete_kb(groups))
 
 
 @router.callback_query(F.data.startswith("delgroup:"))
 async def del_group_cb(callback: CallbackQuery):
     chat_id = int(callback.data.split(":")[1])
     await remove_group(user_profile_key(callback.from_user.id), chat_id)
-    await callback.answer("O'chirildi")
-    await callback.message.answer("✅ Guruh o'chirildi.")
+    await callback.answer("Ўчирилди")
+    await callback.message.answer("✅ Гуруҳ ўчирилди.")
 
 
-@router.message(F.text.in_({"💬 Xabar yozish", "Xabar yozish"}))
+@router.message(F.text.in_(MESSAGE_TEXTS))
 async def ask_message(message: Message, state: FSMContext):
+    if not await _ensure_user_access(message, state):
+        return
     await state.set_state(AdStates.waiting_message_text)
-    await message.answer("💬 Guruhlarga yuboriladigan xabar matnini yuboring.")
+    await message.answer("💬 Гуруҳларга юбориладиган хабар матнини юборинг.")
 
 
 @router.message(AdStates.waiting_message_text)
 async def save_message(message: Message, state: FSMContext):
+    if _is_back_text(message):
+        await state.clear()
+        await _show_home(message)
+        return
     text = message.html_text or message.text
     if not text:
-        await message.answer("Matnli xabar yuboring.")
+        await message.answer("Матнли хабар юборинг.")
         return
     await set_message_text(_key(message), text)
     await state.clear()
@@ -656,8 +764,8 @@ async def save_message(message: Message, state: FSMContext):
     if len(preview) > 700:
         preview = preview[:700] + "..."
     await message.answer(
-        "✅ Xabar saqlandi.\n\n"
-        "Ko'rinishi:\n"
+        "✅ Хабар сақланди.\n\n"
+        "Кўриниши:\n"
         "----------------\n"
         f"{preview}\n"
         "----------------",
@@ -666,65 +774,70 @@ async def save_message(message: Message, state: FSMContext):
     await _send_next_step(message)
 
 
-@router.message(F.text.in_({"⚙️ Sozlamalar", "Sozlamalar"}))
+@router.message(F.text.in_(SETTINGS_TEXTS))
 async def settings(message: Message):
+    if not await _ensure_user_access(message):
+        return
     current = await get_settings(_key(message))
     await message.answer(
-        f"⚙️ Sozlamalar\n\n⏱ Xabar yuborish tezligi: {_interval_label(current.interval_minutes)}",
+        f"⚙️ Созламалар\n\n⏱ Хабар юбориш вақти: {_interval_label(current.interval_minutes)}",
         reply_markup=settings_kb(),
     )
 
 
-@router.message(F.text.in_({"⏱ Interval", "Interval"}))
+@router.message(F.text.in_(INTERVAL_TEXTS))
 async def show_interval(message: Message):
+    if not await _ensure_user_access(message):
+        return
     settings_row = await get_settings(_key(message))
     await message.answer(
-        "⏱ Xabar yuborish tezligini tanlang:\n\n"
-        f"Hozirgi: {_interval_label(settings_row.interval_minutes)}\n\n"
-        "⚡ Tez - har 5 daqiqa\n"
-        "✅ O'rtacha - har 15 daqiqa\n"
-        "🐢 Sekin - har 30 daqiqa\n\n"
-        "Bot xavfsizlik uchun har 6 soatda 20 daqiqa dam oladi va 12 soatdan keyin o'zi to'xtaydi.",
+        "⏱ Хабар юбориш вақтини танланг:\n\n"
+        f"Ҳозирги: {_interval_label(settings_row.interval_minutes)}\n\n"
+        "⚡ Тез - ҳар 5 дақиқа\n"
+        "✅ Ўртача - ҳар 15 дақиқа\n"
+        "🐢 Секин - ҳар 30 дақиқа\n\n"
+        "Бот хавфсизлик учун ҳар 6 соатда 20 дақиқа дам олади ва 12 соатдан кейин ўзи тўхтайди.",
         reply_markup=interval_kb(),
     )
 
 
-@router.message(F.text.in_({"⚡ Tez - 5 daqiqa", "✅ O'rtacha - 15 daqiqa", "🐢 Sekin - 30 daqiqa"}))
+@router.message(F.text.in_(set(INTERVAL_PRESETS)))
 async def set_interval_preset(message: Message):
-    presets = {
-        "⚡ Tez - 5 daqiqa": 5,
-        "✅ O'rtacha - 15 daqiqa": 15,
-        "🐢 Sekin - 30 daqiqa": 30,
-    }
-    minutes = presets[message.text]
+    if not await _ensure_user_access(message):
+        return
+    minutes = INTERVAL_PRESETS[message.text]
     await set_interval(_key(message), minutes)
     await message.answer(
-        f"✅ Tezlik tanlandi: {_interval_label(minutes)}\n\n"
-        "Endi Start / Stop bosib ishga tushirishingiz mumkin.",
+        f"✅ Вақт танланди: {_interval_label(minutes)}\n\n"
+        "Энди «🚀 Старт / Стоп» босиб ишга туширишингиз мумкин.",
         reply_markup=settings_kb(),
     )
 
 
-@router.message(F.text.in_({"⚙️ Qo'lda tanlash", "Qo'lda tanlash"}))
+@router.message(F.text.in_(MANUAL_INTERVAL_TEXTS))
 async def show_manual_interval(message: Message):
-    await message.answer("⚙️ Qo'lda interval tanlang:", reply_markup=manual_interval_kb())
+    if not await _ensure_user_access(message):
+        return
+    await message.answer("⚙️ Қўлда вақт танланг:", reply_markup=manual_interval_kb())
 
 
-@router.message(F.text.regexp(r"^(⏱ )?\d+ (daqiqa|soat)$"))
+@router.message(F.text.regexp(r"^(⏱ )?\d+ (дақиқа|соат|daqiqa|soat)$"))
 async def set_interval_message(message: Message):
+    if not await _ensure_user_access(message):
+        return
     number = int(re.search(r"\d+", message.text or "").group())
-    minutes = number * 60 if "soat" in message.text else number
+    minutes = number * 60 if ("soat" in message.text or "соат" in message.text) else number
     await set_interval(_key(message), minutes)
-    await message.answer(f"✅ Tezlik yangilandi: {_interval_label(minutes)}", reply_markup=settings_kb())
+    await message.answer(f"✅ Вақт янгиланди: {_interval_label(minutes)}", reply_markup=settings_kb())
 
 
-@router.message(F.text.in_({"🚀 Start / Stop", "Start / Stop"}))
+@router.message(F.text.in_(START_STOP_TEXTS))
 async def start_or_stop(message: Message, state: FSMContext):
     profile = _key(message)
     settings_row = await get_settings(profile)
     if settings_row.is_running:
         await stop_broadcast(profile)
-        await message.answer("⏹ To'xtatildi.", reply_markup=await _main_kb(message))
+        await message.answer("⏹ Тўхтатилди.", reply_markup=await _main_kb(message))
         return
 
     account = await get_user_account(message.from_user.id)
@@ -752,16 +865,20 @@ async def start_or_stop(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=await _main_kb(message))
     await start_broadcast(profile)
     await message.answer(
-        "🚀 Ishga tushirildi.\n\n"
-        f"⏱ Tezlik: har {_interval_label(settings_row.interval_minutes)}\n"
-        "⏸ Har 6 soatda 20 daqiqa dam oladi.\n"
-        "⏹ 12 soatdan keyin avtomatik to'xtaydi. Qayta boshlash uchun Start / Stop ni bosing.",
+        "🚀 Ишга туширилди.\n\n"
+        f"⏱ Вақт: ҳар {_interval_label(settings_row.interval_minutes)}\n"
+        "⏸ Ҳар 6 соатда 20 дақиқа дам олади.\n"
+        "⏹ 12 соатдан кейин автоматик тўхтайди. Қайта бошлаш учун «🚀 Старт / Стоп» ни босинг.",
         reply_markup=await _main_kb(message),
     )
 
 
 @router.message(AdStates.waiting_payment_receipt)
 async def receive_payment(message: Message, state: FSMContext, bot: Bot):
+    if _is_back_text(message):
+        await state.clear()
+        await _show_home(message)
+        return
     file_id = None
     file_type = None
     if message.photo:
@@ -772,7 +889,7 @@ async def receive_payment(message: Message, state: FSMContext, bot: Bot):
         file_type = "document"
 
     if not file_id:
-        await message.answer("❌ Chekni rasm yoki fayl qilib yuboring.")
+        await message.answer("❌ Чекни расм ёки файл қилиб юборинг.")
         return
 
     payment = await create_pending_payment(message.from_user.id, file_id, file_type)
@@ -788,7 +905,7 @@ async def receive_payment(message: Message, state: FSMContext, bot: Bot):
         await bot.send_document(ADMIN_ID, file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
 
     await state.clear()
-    await message.answer("✅ Chek adminga yuborildi. Tasdiqlanishini kuting.", reply_markup=await _main_kb(message))
+    await message.answer("✅ Чек админга юборилди. Тасдиқланишини кутинг.", reply_markup=await _main_kb(message))
 
 
 @router.callback_query(F.data.startswith("payok:"))
@@ -805,10 +922,11 @@ async def approve_payment(callback: CallbackQuery):
     await set_payment_status(payment_id, "approved")
     await callback.bot.send_message(
         payment.user_id,
-        f"✅ To'lov tasdiqlandi!\n🎉 Obuna yoqildi.\n📅 Gacha: {_format_until(until)}",
-        reply_markup=main_menu_kb(),
+        f"✅ Тўлов тасдиқланди!\n🎉 Обуна ёқилди.\n📅 Гача: {_format_until(until)}\n\n"
+        "Энди «👥 Гуруҳлар», «💬 Хабар ёзиш» ва «🚀 Старт / Стоп» бўлимлари очиқ.",
+        reply_markup=main_menu_kb(False, True, True),
     )
-    await callback.answer("Tasdiqlandi")
+    await callback.answer("Тасдиқланди")
 
 
 @router.callback_query(F.data.startswith("payno:"))
@@ -848,10 +966,10 @@ async def receive_reject_reason(message: Message, state: FSMContext, bot: Bot):
     await set_payment_status(payment_id, "rejected")
     await bot.send_message(
         payment.user_id,
-        "❌ To'lov tasdiqlanmadi.\n\n"
-        f"Sabab: {reason}\n\n"
-        "Qayta chek yuborishingiz yoki admin bilan bog'lanishingiz mumkin.",
-        reply_markup=main_menu_kb(),
+        "❌ Тўлов тасдиқланмади.\n\n"
+        f"Сабаб: {reason}\n\n"
+        "Қайта чек юборишингиз ёки админ билан боғланишингиз мумкин.",
+        reply_markup=main_menu_kb(False, True, False),
     )
     await state.clear()
     await message.answer("✅ To'lov rad etildi va sabab userga yuborildi.", reply_markup=admin_menu_kb())

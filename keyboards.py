@@ -4,17 +4,20 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import INTERVAL_OPTIONS
 
 
-def main_menu_kb(is_admin: bool = False, profile_linked: bool = False) -> ReplyKeyboardMarkup:
+def main_menu_kb(is_admin: bool = False, profile_linked: bool = False, subscribed: bool = False) -> ReplyKeyboardMarkup:
     keyboard = []
     if not profile_linked:
-        keyboard.append([KeyboardButton(text="👤 Profil ulash")])
-    keyboard.extend([
-        [KeyboardButton(text="👥 Guruhlar"), KeyboardButton(text="💬 Xabar yozish")],
-        [KeyboardButton(text="🚀 Start / Stop")],
-        [KeyboardButton(text="⚙️ Sozlamalar")],
-    ])
+        keyboard.append([KeyboardButton(text="👤 Профил улаш")])
+    elif not subscribed:
+        keyboard.append([KeyboardButton(text="💳 Обуна бўлиш")])
+    else:
+        keyboard.extend([
+            [KeyboardButton(text="👥 Гуруҳлар"), KeyboardButton(text="💬 Хабар ёзиш")],
+            [KeyboardButton(text="🚀 Старт / Стоп")],
+            [KeyboardButton(text="⚙️ Созламалар")],
+        ])
     if is_admin:
-        keyboard.append([KeyboardButton(text="🛠 Admin panel")])
+        keyboard.append([KeyboardButton(text="🛠 Админ панел")])
     return ReplyKeyboardMarkup(
         keyboard=keyboard,
         resize_keyboard=True,
@@ -24,8 +27,8 @@ def main_menu_kb(is_admin: bool = False, profile_linked: bool = False) -> ReplyK
 def profile_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📱 Telefon orqali ulash")],
-            [KeyboardButton(text="⬅️ Orqaga")],
+            [KeyboardButton(text="📱 Телефон орқали улаш")],
+            [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,
     )
@@ -34,8 +37,8 @@ def profile_kb() -> ReplyKeyboardMarkup:
 def phone_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📲 Raqamni yuborish", request_contact=True)],
-            [KeyboardButton(text="⬅️ Orqaga")],
+            [KeyboardButton(text="📲 Рақамни юбориш", request_contact=True)],
+            [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,
     )
@@ -44,10 +47,10 @@ def phone_kb() -> ReplyKeyboardMarkup:
 def groups_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="➕ Guruh qo'shish"), KeyboardButton(text="📋 Guruhlar ro'yxati")],
-            [KeyboardButton(text="✅ Barcha guruhlarni qo'shish")],
-            [KeyboardButton(text="🗑 Guruh o'chirish")],
-            [KeyboardButton(text="⬅️ Orqaga")],
+            [KeyboardButton(text="➕ Гуруҳ қўшиш"), KeyboardButton(text="📋 Гуруҳлар рўйхати")],
+            [KeyboardButton(text="✅ Барча гуруҳларни қўшиш")],
+            [KeyboardButton(text="🗑 Гуруҳ ўчириш")],
+            [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,
     )
@@ -56,8 +59,8 @@ def groups_kb() -> ReplyKeyboardMarkup:
 def settings_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="⏱ Interval")],
-            [KeyboardButton(text="⬅️ Orqaga")],
+            [KeyboardButton(text="⏱ Вақт")],
+            [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,
     )
@@ -66,11 +69,11 @@ def settings_kb() -> ReplyKeyboardMarkup:
 def interval_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="⚡ Tez - 5 daqiqa")],
-            [KeyboardButton(text="✅ O'rtacha - 15 daqiqa")],
-            [KeyboardButton(text="🐢 Sekin - 30 daqiqa")],
-            [KeyboardButton(text="⚙️ Qo'lda tanlash")],
-            [KeyboardButton(text="⬅️ Orqaga")],
+            [KeyboardButton(text="⚡ Тез - 5 дақиқа")],
+            [KeyboardButton(text="✅ Ўртача - 15 дақиқа")],
+            [KeyboardButton(text="🐢 Секин - 30 дақиқа")],
+            [KeyboardButton(text="⚙️ Қўлда танлаш")],
+            [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,
     )
@@ -80,20 +83,20 @@ def manual_interval_kb() -> ReplyKeyboardMarkup:
     rows = []
     row = []
     for minutes in INTERVAL_OPTIONS:
-        label = f"⏱ {minutes} daqiqa" if minutes < 60 else f"⏱ {minutes // 60} soat"
+        label = f"⏱ {minutes} дақиқа" if minutes < 60 else f"⏱ {minutes // 60} соат"
         row.append(KeyboardButton(text=label))
         if len(row) == 2:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    rows.append([KeyboardButton(text="⬅️ Orqaga")])
+    rows.append([KeyboardButton(text="⬅️ Орқага")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def dialog_pick_kb(dialogs: list[dict]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Barchasini qo'shish", callback_data="addallgroups")
+    kb.button(text="✅ Барчасини қўшиш", callback_data="addallgroups")
     for dialog in dialogs:
         kb.button(text=f"👥 {dialog['title'][:35]}", callback_data=f"addgroup:{dialog['chat_id']}")
     kb.adjust(1)
