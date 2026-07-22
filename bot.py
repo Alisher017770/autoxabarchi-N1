@@ -6,9 +6,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from config import BOT_BRAND, BOT_TOKEN, validate_config
+from broadcaster import resume_running_profiles
 from db import init_db
 from handlers import router as main_router
-from repository import stop_all_running_profiles
 from subscription_monitor import subscription_monitor
 from telethon_clients import disconnect_all
 
@@ -44,7 +44,7 @@ async def main():
 
     dp.include_router(main_router)
 
-    await stop_all_running_profiles()
+    await resume_running_profiles()
     monitor_task = asyncio.create_task(subscription_monitor(bot))
 
     try:
