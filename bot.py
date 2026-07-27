@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from config import BOT_BRAND, BOT_TOKEN, validate_config
-from broadcaster import resume_running_profiles
+from broadcaster import configure_broadcaster_bot, resume_running_profiles
 from db import init_db
 from handlers import router as main_router
 from keyboards import RESERVED_MESSAGE_TEXTS
@@ -26,6 +26,7 @@ async def main():
         logger.warning("%s ta menyu matni xabar sozlamasidan tozalandi", cleared_messages)
 
     bot = Bot(token=BOT_TOKEN)
+    configure_broadcaster_bot(bot)
     try:
         await bot.set_my_name(name=BOT_BRAND)
         await bot.set_my_commands([
