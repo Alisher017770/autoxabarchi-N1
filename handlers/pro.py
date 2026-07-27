@@ -31,6 +31,7 @@ from keyboards import (
     pending_payments_kb,
     phone_kb,
     profile_kb,
+    RESERVED_MESSAGE_TEXTS,
     settings_kb,
     subscriber_thanks_kb,
     subscription_offer_kb,
@@ -77,6 +78,12 @@ SUBSCRIBER_THANKS_TEXT = (
     "Сизнинг ишончингиз биз учун муҳим!"
 )
 _audience_broadcasts_running: set[str] = set()
+
+ADMIN_USERS_TEXTS = {"👥 Фойдаланувчилар", "Фойдаланувчилар", "👥 Userlar", "Userlar"}
+SUBSCRIBED_USERS_TEXTS = {"✅ Обуна бўлганлар", "✅ Obuna bo'lganlar"}
+UNSUBSCRIBED_USERS_TEXTS = {"❌ Обуна бўлмаганлар", "❌ Obuna bo'lmaganlar"}
+SUBSCRIPTION_OFFER_ACTION_TEXTS = {"🎁 Обунасизларга таклиф", "🎁 Obunasizlarga taklif"}
+SUBSCRIBER_THANKS_ACTION_TEXTS = {"💚 Обуначиларга раҳмат", "💚 Obunachilarga rahmat"}
 
 BACK_TEXTS = {"⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga"}
 ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel"}
@@ -145,11 +152,39 @@ def _is_back_text(message: Message) -> bool:
 
 
 async def _cancel_admin_state(message: Message, state: FSMContext) -> bool:
-    if _is_admin(message) and _is_back_text(message):
-        await state.clear()
-        await _show_admin_panel(message)
-        return True
-    return False
+    if not _is_admin(message):
+        return False
+    return await _handle_reserved_menu(message, state)
+
+
+async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
+    text = message.text or ""
+    if text not in RESERVED_MESSAGE_TEXTS:
+        return False
+
+    await state.clear()
+    if _is_admin(message):
+        if text in ADMIN_USERS_TEXTS:
+            await admin_users(message)
+        elif text in SUBSCRIBED_USERS_TEXTS:
+            await admin_subscribed_users(message)
+        elif text in UNSUBSCRIBED_USERS_TEXTS:
+            await admin_unsubscribed_users(message)
+        elif text in SUBSCRIPTION_OFFER_ACTION_TEXTS:
+            await preview_subscription_offer(message)
+        elif text in SUBSCRIBER_THANKS_ACTION_TEXTS:
+            await preview_subscriber_thanks(message)
+        else:
+            await message.answer(
+                "⚠️ Меню тугмаси хабар сифатида юборилмади. Керакли бўлимни қайта танланг.",
+                reply_markup=admin_menu_kb(),
+            )
+    else:
+        await message.answer(
+            "⚠️ Меню тугмаси хабар сифатида сақланмади. Керакли бўлимни қайта танланг.",
+            reply_markup=await _main_kb(message),
+        )
+    return True
 
 
 async def _show_home(message: Message):
@@ -375,7 +410,7 @@ async def send_admin_broadcast(message: Message, state: FSMContext, bot: Bot):
     await message.answer(f"✅ Эълон юборилди.\n\nЮборилди: {sent}\nЕтиб бормади: {failed}", reply_markup=admin_menu_kb())
 
 
-@router.message(F.text.in_({"👥 Фойдаланувчилар", "Фойдаланувчилар", "👥 Userlar", "Userlar"}))
+@router.message(F.text.in_(ADMIN_USERS_TEXTS))
 async def admin_users(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
@@ -412,7 +447,7 @@ async def _show_filtered_admin_users(message: Message, active: bool):
     await message.answer("\n\n".join(lines), reply_markup=admin_users_filter_kb(), parse_mode="HTML")
 
 
-@router.message(F.text.in_({"✅ Обуна бўлганлар", "✅ Obuna bo'lganlar"}))
+@router.message(F.text.in_(SUBSCRIBED_USERS_TEXTS))
 async def admin_subscribed_users(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
@@ -420,7 +455,7 @@ async def admin_subscribed_users(message: Message):
     await _show_filtered_admin_users(message, active=True)
 
 
-@router.message(F.text.in_({"❌ Обуна бўлмаганлар", "❌ Obuna bo'lmaganlar"}))
+@router.message(F.text.in_(UNSUBSCRIBED_USERS_TEXTS))
 async def admin_unsubscribed_users(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
@@ -428,7 +463,7 @@ async def admin_unsubscribed_users(message: Message):
     await _show_filtered_admin_users(message, active=False)
 
 
-@router.message(F.text.in_({"🎁 Обунасизларга таклиф", "🎁 Obunasizlarga taklif"}))
+@router.message(F.text.in_(SUBSCRIPTION_OFFER_ACTION_TEXTS))
 async def preview_subscription_offer(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
@@ -444,7 +479,7 @@ async def preview_subscription_offer(message: Message):
     )
 
 
-@router.message(F.text.in_({"💚 Обуначиларга раҳмат", "💚 Obunachilarga rahmat"}))
+@router.message(F.text.in_(SUBSCRIBER_THANKS_ACTION_TEXTS))
 async def preview_subscriber_thanks(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
@@ -951,6 +986,8 @@ async def ask_message(message: Message, state: FSMContext):
 
 @router.message(AdStates.waiting_message_text)
 async def save_message(message: Message, state: FSMContext):
+    if await _handle_reserved_menu(message, state):
+        return
     if _is_back_text(message):
         await state.clear()
         await _show_home(message)
