@@ -32,6 +32,8 @@ RESERVED_MESSAGE_TEXTS = {
     "📌 Нарх", "Нарх", "💳 Карта", "Карта", "👤 Карта эгаси", "Карта эгаси",
     "✅ Обуна бўлганлар", "❌ Обуна бўлмаганлар",
     "🎁 Обунасизларга таклиф", "💚 Обуначиларга раҳмат",
+    "🔎 Фойдаланувчини қидириш", "⚠️ Муаммоли профиллар",
+    "⏳ Обунаси тугаётганлар", "1️⃣ 1 кун қолганлар", "3️⃣ 3 кун қолганлар",
 }
 
 
@@ -167,6 +169,9 @@ def admin_menu_kb() -> ReplyKeyboardMarkup:
 def admin_users_filter_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="🔎 Фойдаланувчини қидириш")],
+            [KeyboardButton(text="⚠️ Муаммоли профиллар")],
+            [KeyboardButton(text="⏳ Обунаси тугаётганлар")],
             [KeyboardButton(text="✅ Обуна бўлганлар")],
             [KeyboardButton(text="❌ Обуна бўлмаганлар")],
             [KeyboardButton(text="🎁 Обунасизларга таклиф")],
@@ -175,6 +180,52 @@ def admin_users_filter_kb() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
+
+
+def expiring_users_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="1️⃣ 1 кун қолганлар"), KeyboardButton(text="3️⃣ 3 кун қолганлар")],
+            [KeyboardButton(text="👥 Фойдаланувчилар")],
+            [KeyboardButton(text="🛠 Админ панел")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def admin_user_results_kb(users: list[dict]) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for item in users:
+        name = str(item.get("first_name") or "-")[:24]
+        kb.button(text=f"👤 {name} · {item['user_id']}", callback_data=f"usercard:{item['user_id']}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def admin_user_card_kb(user_id: int, active: bool) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎟 30 кун узайтириш", callback_data=f"userextend:{user_id}:30")
+    if active:
+        kb.button(text="🚫 Обунани ўчириш", callback_data=f"userrevoke:{user_id}")
+    kb.button(text="🔄 Янгилаш", callback_data=f"usercard:{user_id}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def admin_user_revoke_confirm_kb(user_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Ҳа, ўчириш", callback_data=f"userrevokeok:{user_id}")
+    kb.button(text="❌ Бекор қилиш", callback_data=f"usercard:{user_id}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def expiring_user_actions_kb(user_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="👤 Картани очиш", callback_data=f"usercard:{user_id}")
+    kb.button(text="🔔 Эслатма юбориш", callback_data=f"userremind:{user_id}")
+    kb.adjust(2)
+    return kb.as_markup()
 
 
 def admin_audience_confirm_kb(target: str) -> InlineKeyboardMarkup:

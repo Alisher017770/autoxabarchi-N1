@@ -52,6 +52,15 @@ class SubscriptionNotice(Base):
     expired_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class BroadcastIssue(Base):
+    __tablename__ = "broadcast_issues"
+
+    profile: Mapped[str] = mapped_column(String(20), primary_key=True)
+    issue_type: Mapped[str] = mapped_column(String(32))
+    details: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class PendingPayment(Base):
     __tablename__ = "pending_payments"
 

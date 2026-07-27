@@ -19,8 +19,13 @@ from config import (
 from keyboards import (
     admin_audience_confirm_kb,
     admin_menu_kb,
+    admin_user_card_kb,
+    admin_user_results_kb,
+    admin_user_revoke_confirm_kb,
     admin_users_filter_kb,
     dialog_pick_kb,
+    expiring_user_actions_kb,
+    expiring_users_kb,
     group_delete_kb,
     groups_kb,
     interval_kb,
@@ -43,18 +48,22 @@ from repository import (
     count_users_by_subscription,
     ensure_user,
     get_admin_stats,
+    get_admin_user_card,
     get_payment_config,
     get_pending_payment,
     get_settings,
     get_user_account,
     has_active_subscription,
+    list_expiring_user_summaries,
     list_pending_payments,
     list_groups,
+    list_problem_users,
     list_user_ids,
     list_user_ids_by_subscription,
     list_user_summaries,
     remove_group,
     revoke_subscription,
+    search_users,
     set_bot_config,
     set_interval,
     set_message_text,
@@ -84,6 +93,11 @@ SUBSCRIBED_USERS_TEXTS = {"✅ Обуна бўлганлар", "✅ Obuna bo'lga
 UNSUBSCRIBED_USERS_TEXTS = {"❌ Обуна бўлмаганлар", "❌ Obuna bo'lmaganlar"}
 SUBSCRIPTION_OFFER_ACTION_TEXTS = {"🎁 Обунасизларга таклиф", "🎁 Obunasizlarga taklif"}
 SUBSCRIBER_THANKS_ACTION_TEXTS = {"💚 Обуначиларга раҳмат", "💚 Obunachilarga rahmat"}
+USER_SEARCH_TEXTS = {"🔎 Фойдаланувчини қидириш", "Фойдаланувчини қидириш"}
+PROBLEM_USERS_TEXTS = {"⚠️ Муаммоли профиллар", "Муаммоли профиллар"}
+EXPIRING_USERS_TEXTS = {"⏳ Обунаси тугаётганлар", "Обунаси тугаётганлар"}
+EXPIRING_ONE_DAY_TEXTS = {"1️⃣ 1 кун қолганлар", "1 кун қолганлар"}
+EXPIRING_THREE_DAYS_TEXTS = {"3️⃣ 3 кун қолганлар", "3 кун қолганлар"}
 
 BACK_TEXTS = {"⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga"}
 ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel"}
@@ -174,6 +188,16 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
             await preview_subscription_offer(message)
         elif text in SUBSCRIBER_THANKS_ACTION_TEXTS:
             await preview_subscriber_thanks(message)
+        elif text in USER_SEARCH_TEXTS:
+            await ask_admin_user_search(message, state)
+        elif text in PROBLEM_USERS_TEXTS:
+            await admin_problem_users(message)
+        elif text in EXPIRING_USERS_TEXTS:
+            await admin_expiring_users(message)
+        elif text in EXPIRING_ONE_DAY_TEXTS:
+            await admin_expiring_one_day(message)
+        elif text in EXPIRING_THREE_DAYS_TEXTS:
+            await admin_expiring_three_days(message)
         else:
             await message.answer(
                 "⚠️ Меню тугмаси хабар сифатида юборилмади. Керакли бўлимни қайта танланг.",
@@ -306,6 +330,31 @@ async def cmd_start(message: Message):
     if WELCOME_STICKER_ID:
         await message.answer_sticker(WELCOME_STICKER_ID)
     await _show_home(message)
+
+
+@router.message(AdStates.waiting_admin_user_search)
+async def receive_admin_user_search(message: Message, state: FSMContext):
+    if await _cancel_admin_state(message, state):
+        return
+    if not _is_admin(message):
+        await state.clear()
+        return
+    query = (message.text or "").strip()
+    if len(query) < 2:
+        await message.answer("Камида 2 та белги киритинг.")
+        return
+    users = await search_users(query, limit=20)
+    await state.clear()
+    if not users:
+        await message.answer("❌ Фойдаланувчи топилмади.", reply_markup=admin_users_filter_kb())
+        return
+    if len(users) == 1:
+        await _send_admin_user_card(message, int(users[0]["user_id"]))
+        return
+    await message.answer(
+        f"🔎 Натижа: {len(users)} та. Керакли одамни танланг:",
+        reply_markup=admin_user_results_kb(users),
+    )
 
 
 async def _show_admin_panel(message: Message):
@@ -461,6 +510,203 @@ async def admin_unsubscribed_users(message: Message):
         await message.answer("Рухсат йўқ.")
         return
     await _show_filtered_admin_users(message, active=False)
+
+
+def _admin_user_card_text(item: dict) -> str:
+    linked = "✅ уланган" if item["linked"] else "❌ уланмаган"
+    subscription = f"✅ {_format_until(item['active_until'])}" if item["active"] else "❌ актив эмас"
+    message_ready = "✅ ёзилган" if item["message_ready"] else "❌ ёзилмаган"
+    if item["issue_details"]:
+        broadcast = f"❌ {html.escape(str(item['issue_details']))}"
+    elif item["is_running"]:
+        broadcast = "✅ ишлаяпти"
+    else:
+        broadcast = "⏸ тўхтатилган"
+    user_id = int(item["user_id"])
+    safe_name = html.escape(str(item["first_name"]))
+    safe_phone = html.escape(str(item["phone"]))
+    return (
+        "👤 <b>Фойдаланувчи картаси</b>\n\n"
+        f'Исм: <a href="tg://user?id={user_id}">{safe_name}</a>\n'
+        f'ID: <a href="tg://user?id={user_id}">{user_id}</a>\n'
+        f"Телефон: {safe_phone}\n\n"
+        f"🔗 Профил: {linked}\n"
+        f"🎟 Обуна: {subscription}\n"
+        f"👥 Гуруҳлар: {item['groups_count']} та\n"
+        f"💬 Хабар: {message_ready}\n"
+        f"🚀 Тарқатиш: {broadcast}"
+    )
+
+
+async def _send_admin_user_card(target: Message, user_id: int, edit: bool = False):
+    item = await get_admin_user_card(user_id)
+    if not item:
+        if edit:
+            await target.edit_text("❌ Фойдаланувчи топилмади.")
+        else:
+            await target.answer("❌ Фойдаланувчи топилмади.", reply_markup=admin_users_filter_kb())
+        return
+    kwargs = {
+        "reply_markup": admin_user_card_kb(user_id, item["active"]),
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }
+    if edit:
+        await target.edit_text(_admin_user_card_text(item), **kwargs)
+    else:
+        await target.answer(_admin_user_card_text(item), **kwargs)
+
+
+@router.message(F.text.in_(USER_SEARCH_TEXTS))
+async def ask_admin_user_search(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await state.set_state(AdStates.waiting_admin_user_search)
+    await message.answer(
+        "🔎 Фойдаланувчининг ID рақами, исми ёки телефон рақамини юборинг.",
+        reply_markup=admin_users_filter_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("usercard:"))
+async def admin_user_card_callback(callback: CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    user_id = int(callback.data.split(":", 1)[1])
+    await _send_admin_user_card(callback.message, user_id, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("userextend:"))
+async def admin_user_extend_callback(callback: CallbackQuery, bot: Bot):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    _, user_id_text, days_text = callback.data.split(":")
+    user_id, days = int(user_id_text), int(days_text)
+    until = await activate_subscription(user_id, days)
+    try:
+        await bot.send_message(
+            user_id,
+            f"✅ Обунангиз админ томонидан {days} кунга узайтирилди.\n📅 Гача: {_format_until(until)}",
+        )
+    except Exception:
+        pass
+    await _send_admin_user_card(callback.message, user_id, edit=True)
+    await callback.answer(f"{days} кунга узайтирилди")
+
+
+@router.callback_query(F.data.startswith("userrevoke:"))
+async def admin_user_revoke_confirm(callback: CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    user_id = int(callback.data.split(":", 1)[1])
+    await callback.message.edit_reply_markup(reply_markup=admin_user_revoke_confirm_kb(user_id))
+    await callback.answer("Тасдиқланг")
+
+
+@router.callback_query(F.data.startswith("userrevokeok:"))
+async def admin_user_revoke_callback(callback: CallbackQuery, bot: Bot):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    user_id = int(callback.data.split(":", 1)[1])
+    await revoke_subscription(user_id)
+    await stop_broadcast(str(user_id))
+    try:
+        await bot.send_message(user_id, "🚫 Обунангиз админ томонидан ўчирилди.")
+    except Exception:
+        pass
+    await _send_admin_user_card(callback.message, user_id, edit=True)
+    await callback.answer("Обуна ўчирилди")
+
+
+@router.message(F.text.in_(PROBLEM_USERS_TEXTS))
+async def admin_problem_users(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    users = await list_problem_users(limit=20)
+    if not users:
+        await message.answer("✅ Муаммоли профил топилмади.", reply_markup=admin_users_filter_kb())
+        return
+    lines = [f"⚠️ <b>Муаммоли профиллар</b>\nЖами кўрсатилди: {len(users)} та\n"]
+    for item in users:
+        reasons = "; ".join(html.escape(str(reason)) for reason in item["reasons"])
+        lines.append(f"👤 {html.escape(str(item['first_name']))} · {item['user_id']}\n{reasons}")
+    await message.answer(
+        "\n\n".join(lines),
+        reply_markup=admin_user_results_kb(users),
+        parse_mode="HTML",
+    )
+
+
+@router.message(F.text.in_(EXPIRING_USERS_TEXTS))
+async def admin_expiring_users(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await message.answer(
+        "⏳ Обунаси тугаётганлар\n\nКеракли муддатни танланг:",
+        reply_markup=expiring_users_kb(),
+    )
+
+
+async def _show_expiring_users(message: Message, days_left: int):
+    users = await list_expiring_user_summaries(days_left, limit=20)
+    label = "1 кундан кам" if days_left == 1 else "1–3 кун"
+    if not users:
+        await message.answer(f"✅ {label} вақт қолган обуначи йўқ.", reply_markup=expiring_users_kb())
+        return
+    await message.answer(f"⏳ {label} вақт қолганлар: {len(users)} та", reply_markup=expiring_users_kb())
+    for item in users:
+        await message.answer(
+            f"👤 {item['first_name']} · {item['user_id']}\n📅 Гача: {_format_until(item['active_until'])}",
+            reply_markup=expiring_user_actions_kb(int(item["user_id"])),
+        )
+
+
+@router.message(F.text.in_(EXPIRING_ONE_DAY_TEXTS))
+async def admin_expiring_one_day(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await _show_expiring_users(message, 1)
+
+
+@router.message(F.text.in_(EXPIRING_THREE_DAYS_TEXTS))
+async def admin_expiring_three_days(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await _show_expiring_users(message, 3)
+
+
+@router.callback_query(F.data.startswith("userremind:"))
+async def admin_user_remind_callback(callback: CallbackQuery, bot: Bot):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    user_id = int(callback.data.split(":", 1)[1])
+    until = await subscription_until(user_id)
+    if not until or until <= datetime.utcnow():
+        await callback.answer("Обуна актив эмас.", show_alert=True)
+        return
+    try:
+        await bot.send_message(
+            user_id,
+            "⏳ Обунангиз яқин кунларда тугайди.\n\n"
+            f"📅 Гача: {_format_until(until)}\n"
+            "Узлуксиз ишлаш учун обунани олдиндан янгиланг.",
+            reply_markup=main_menu_kb(False, True, True),
+        )
+    except Exception:
+        await callback.answer("Хабарни юбориб бўлмади.", show_alert=True)
+        return
+    await callback.answer("Эслатма юборилди")
 
 
 @router.message(F.text.in_(SUBSCRIPTION_OFFER_ACTION_TEXTS))
@@ -1216,3 +1462,8 @@ async def receive_reject_reason(message: Message, state: FSMContext, bot: Bot):
 @router.message()
 async def unknown(message: Message):
     await message.answer("❓ Мен бу хабарни тушунмадим. /start босинг.")
+    expiring_user_actions_kb,
+    expiring_users_kb,
+    list_expiring_user_summaries,
+    list_problem_users,
+    search_users,
