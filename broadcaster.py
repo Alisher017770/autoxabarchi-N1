@@ -18,10 +18,13 @@ from config import ADMIN_ID, MAX_RUN_MINUTES, REST_DURATION_MINUTES, REST_EVERY_
 from repository import (
     clear_broadcast_issue,
     clear_group_cooldown,
+    get_broadcast_issue,
     get_group_cooldowns,
     get_settings,
     has_active_subscription,
     list_groups,
+    list_spam_recheck_groups,
+    mark_group_success,
     set_broadcast_issue,
     set_group_cooldown,
     set_running,
@@ -37,6 +40,8 @@ REST_EVERY_SECONDS = REST_EVERY_MINUTES * 60
 REST_DURATION_SECONDS = REST_DURATION_MINUTES * 60
 MAX_RUN_SECONDS = MAX_RUN_MINUTES * 60
 MIN_FORBIDDEN_ATTEMPTS_TO_STOP = 5
+SPAM_RECHECK_GROUP_LIMIT = 5
+SPAM_LOCK_ISSUE_TYPES = {"spam_restricted", "suspected_spam"}
 
 SPAM_ERROR_MARKERS = (
     "PEER_FLOOD",
@@ -65,10 +70,11 @@ def _all_attempts_write_forbidden(attempted: int, sent: int, write_forbidden: in
     )
 
 
-def _spam_check_keyboard() -> InlineKeyboardMarkup:
+def spam_check_keyboard(profile: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🛡 Spam holatini tekshirish", url="https://t.me/SpamBot")]
+            [InlineKeyboardButton(text="🛡 Spam holatini tekshirish", url="https://t.me/SpamBot")],
+            [InlineKeyboardButton(text="🔄 Қайта текшириш", callback_data=f"retryspam:{profile}")],
         ]
     )
 
@@ -88,8 +94,8 @@ async def _stop_spam_restricted_profile(profile: str, exc: Exception) -> None:
             "⛔️ Telegram profilingizda spam cheklovi aniqlandi.\n\n"
             "Bekorga qayta-qayta urinmasligi uchun xabar tarqatish avtomatik to‘xtatildi. "
             "Quyidagi tugma orqali @SpamBot holatini tekshiring. Cheklov olib tashlangach "
-            "«🚀 Старт / Стоп» tugmasini qayta bosishingiz mumkin.",
-            reply_markup=_spam_check_keyboard(),
+            "«🔄 Қайта текшириш» тугмасини босинг.",
+            reply_markup=spam_check_keyboard(profile),
         )
     except Exception:
         logger.exception("[%s] spam cheklovi haqida foydalanuvchiga xabar yuborilmadi", profile)
@@ -122,8 +128,8 @@ async def _stop_all_groups_forbidden(profile: str, attempted: int) -> None:
             "⛔️ Хабар юбориш автоматик тўхтатилди.\n\n"
             f"Натижа: 0/{attempted} та гуруҳга юборилди. Барча гуруҳлар ёзишни рад этди. "
             "Telegram аниқ spam кодини бермади, аммо профилда spam чеклови бўлиши мумкин. "
-            "Қуйидаги тугма орқали @SpamBot ҳолатини текширинг.",
-            reply_markup=_spam_check_keyboard(),
+            "@SpamBot ҳолатини текширинг, кейин «🔄 Қайта текшириш»ни босинг.",
+            reply_markup=spam_check_keyboard(profile),
         )
     except Exception:
         logger.exception("[%s] умумий ёзиш чеклови ҳақида фойдаланувчига хабар берилмади", profile)
@@ -216,6 +222,7 @@ async def _broadcast_loop(profile: str):
                         attempted_count += 1
                         await client.send_message(group.chat_id, text, parse_mode="html")
                         sent_count += 1
+                        await mark_group_success(profile, group.chat_id)
                         if next_send_at:
                             await clear_group_cooldown(profile, group.chat_id)
                     except (PeerFloodError, UserRestrictedError) as exc:
@@ -276,13 +283,23 @@ async def _broadcast_loop(profile: str):
         logger.info("[%s] tsikl bekor qilindi", profile)
         raise
     finally:
+        if _tasks.get(profile) is asyncio.current_task():
+            _tasks.pop(profile, None)
         logger.info("[%s] reklama tsikli to'xtadi", profile)
 
 
-async def start_broadcast(profile: str) -> tuple[bool, str | None]:
+async def start_broadcast(profile: str, *, bypass_spam_lock: bool = False) -> tuple[bool, str | None]:
     task = _tasks.get(profile)
     if task and not task.done():
         return True, None
+    issue = await get_broadcast_issue(profile)
+    if not bypass_spam_lock and issue and issue.issue_type in SPAM_LOCK_ISSUE_TYPES:
+        await set_running(profile, False)
+        return (
+            False,
+            "Профил spam текшируви сабаб тўхтатилган. Аввал @SpamBot орқали ҳолатни "
+            "текширинг, кейин «🔄 Қайта текшириш»ни босинг.",
+        )
     try:
         await get_user_client(int(profile))
     except Exception as exc:
@@ -294,6 +311,88 @@ async def start_broadcast(profile: str) -> tuple[bool, str | None]:
     await set_running(profile, True)
     _tasks[profile] = asyncio.create_task(_broadcast_loop(profile))
     return True, None
+
+
+async def retry_spam_check(profile: str) -> tuple[bool, str]:
+    issue = await get_broadcast_issue(profile)
+    if issue is None or issue.issue_type not in SPAM_LOCK_ISSUE_TYPES:
+        return False, "Профилда фаол spam блоки йўқ."
+
+    user_id = int(profile)
+    if not await has_active_subscription(user_id):
+        return False, "Обуна фаол эмас. Аввал обунани янгиланг."
+
+    settings = await get_settings(profile)
+    if not settings.message_text:
+        return False, "Текшириш учун аввал хабар матнини сақланг."
+
+    groups = await list_spam_recheck_groups(profile, SPAM_RECHECK_GROUP_LIMIT)
+    if not groups:
+        return False, "Текшириш учун сақланган гуруҳлар йўқ."
+
+    try:
+        client = await get_user_client(user_id)
+    except Exception as exc:
+        await set_running(profile, False)
+        return False, f"Telegram профилига уланиб бўлмади: {exc}"
+
+    attempted = 0
+    forbidden = 0
+    for group in groups:
+        attempted += 1
+        try:
+            await client.send_message(group.chat_id, settings.message_text, parse_mode="html")
+            await mark_group_success(profile, group.chat_id)
+            await set_group_cooldown(
+                profile,
+                group.chat_id,
+                datetime.utcnow() + timedelta(minutes=settings.interval_minutes),
+            )
+            await clear_broadcast_issue(profile)
+            started, error = await start_broadcast(profile, bypass_spam_lock=True)
+            if not started:
+                return False, error or "Профил ишга тушмади."
+            return (
+                True,
+                f"✅ Spam чеклови олиб ташлангани тасдиқланди: 1/{attempted} та синов "
+                "муваффақиятли. Хабар юбориш қайта ишга туширилди.",
+            )
+        except (PeerFloodError, UserRestrictedError) as exc:
+            await _stop_spam_restricted_profile(profile, exc)
+            return False, "Telegram ҳали ҳам spam чекловини қайтарди. Кейинроқ қайта текширинг."
+        except (ChatWriteForbiddenError, UserBannedInChannelError):
+            forbidden += 1
+        except FloodWaitError as exc:
+            return False, f"Telegram {exc.seconds} сония кутишни сўради. Кейинроқ қайта текширинг."
+        except SlowModeWaitError as exc:
+            await set_group_cooldown(
+                profile,
+                group.chat_id,
+                datetime.utcnow() + timedelta(seconds=exc.seconds),
+            )
+        except Exception as exc:
+            if _is_account_spam_error(exc):
+                await _stop_spam_restricted_profile(profile, exc)
+                return False, "Telegram ҳали ҳам spam чекловини қайтарди. Кейинроқ қайта текширинг."
+            logger.warning("[%s] spam қайта текширувида %s: %s", profile, group.title, exc)
+        await asyncio.sleep(2)
+
+    await set_running(profile, False)
+    if attempted >= SPAM_RECHECK_GROUP_LIMIT and forbidden == attempted:
+        await set_broadcast_issue(
+            profile,
+            "suspected_spam",
+            f"Қайта текшириш: 0/{attempted} та гуруҳга юборилди",
+        )
+        return (
+            False,
+            f"⛔️ Ҳали очилмаган: 0/{attempted} та синов гуруҳи хабарни рад этди. "
+            "@SpamBot кўрсатган муддат тугагач қайта текширинг.",
+        )
+    return (
+        False,
+        f"⚠️ Ҳолатни тасдиқлаб бўлмади: 0/{attempted} та гуруҳга юборилди. Кейинроқ қайта текширинг.",
+    )
 
 
 async def stop_broadcast(profile: str):
