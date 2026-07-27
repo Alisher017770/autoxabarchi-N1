@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta
 import logging
 import time
 
@@ -12,10 +13,13 @@ from telethon.errors import (
 from config import MAX_RUN_MINUTES, REST_DURATION_MINUTES, REST_EVERY_MINUTES
 from repository import (
     clear_broadcast_issue,
+    clear_group_cooldown,
+    get_group_cooldowns,
     get_settings,
     has_active_subscription,
     list_groups,
     set_broadcast_issue,
+    set_group_cooldown,
     set_running,
 )
 from telethon_clients import get_user_client
@@ -78,6 +82,7 @@ async def _broadcast_loop(profile: str):
 
             if groups:
                 await clear_broadcast_issue(profile)
+                cooldowns = await get_group_cooldowns(profile)
                 try:
                     client = await get_user_client(user_id)
                 except Exception as exc:
@@ -86,12 +91,26 @@ async def _broadcast_loop(profile: str):
                     logger.exception("[%s] Telegram профилига уланмади", profile)
                     break
                 for group in groups:
+                    next_send_at = cooldowns.get(group.chat_id)
+                    if next_send_at and next_send_at > datetime.utcnow():
+                        remaining = max(1, int((next_send_at - datetime.utcnow()).total_seconds()))
+                        logger.info(
+                            "[%s] %s guruhida slow mode, yana %ss dan keyin uriniladi",
+                            profile,
+                            group.title,
+                            remaining,
+                        )
+                        continue
                     try:
                         await client.send_message(group.chat_id, text, parse_mode="html")
+                        if next_send_at:
+                            await clear_group_cooldown(profile, group.chat_id)
                     except FloodWaitError as exc:
                         logger.warning("[%s] FloodWait: %ss kutilmoqda", profile, exc.seconds)
                         await asyncio.sleep(exc.seconds)
                     except SlowModeWaitError as exc:
+                        next_send_at = datetime.utcnow() + timedelta(seconds=exc.seconds)
+                        await set_group_cooldown(profile, group.chat_id, next_send_at)
                         await set_broadcast_issue(
                             profile,
                             "slow_mode",
