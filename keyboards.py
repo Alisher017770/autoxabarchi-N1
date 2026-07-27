@@ -1,3 +1,5 @@
+from urllib.parse import quote
+
 from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -138,10 +140,34 @@ def admin_users_filter_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="✅ Обуна бўлганлар")],
             [KeyboardButton(text="❌ Обуна бўлмаганлар")],
+            [KeyboardButton(text="🎁 Обунасизларга таклиф")],
+            [KeyboardButton(text="💚 Обуначиларга раҳмат")],
             [KeyboardButton(text="🛠 Админ панел")],
         ],
         resize_keyboard=True,
     )
+
+
+def admin_audience_confirm_kb(target: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Тасдиқлаб юбориш", callback_data=f"audience_send:{target}")
+    kb.button(text="❌ Бекор қилиш", callback_data="audience_cancel")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def subscription_offer_kb(bot_username: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💳 Обуна бўлиш", url=f"https://t.me/{bot_username}?start=subscribe")
+    return kb.as_markup()
+
+
+def subscriber_thanks_kb(bot_username: str) -> InlineKeyboardMarkup:
+    bot_url = f"https://t.me/{bot_username}"
+    share_text = quote("Авто Хабарчи N1 — гуруҳларга автоматик хабар юбориш учун қулай бот.")
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📤 Дўстларга улашиш", url=f"https://t.me/share/url?url={quote(bot_url)}&text={share_text}")
+    return kb.as_markup()
 
 
 def payment_settings_kb() -> ReplyKeyboardMarkup:

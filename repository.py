@@ -267,6 +267,21 @@ async def count_users_by_subscription(active: bool) -> int:
         return int(await session.scalar(query) or 0)
 
 
+async def list_user_ids_by_subscription(active: bool) -> list[int]:
+    now = datetime.utcnow()
+    async with async_session() as session:
+        query = (
+            select(UserAccount.user_id)
+            .outerjoin(Subscription, Subscription.user_id == UserAccount.user_id)
+        )
+        if active:
+            query = query.where(Subscription.active_until > now)
+        else:
+            query = query.where(or_(Subscription.active_until.is_(None), Subscription.active_until <= now))
+        result = await session.scalars(query)
+        return [int(user_id) for user_id in result.all()]
+
+
 async def get_admin_stats() -> dict:
     now = datetime.utcnow()
     async with async_session() as session:
