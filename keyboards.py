@@ -33,6 +33,7 @@ RESERVED_MESSAGE_TEXTS = {
     "✅ Обуна бўлганлар", "❌ Обуна бўлмаганлар",
     "🎁 Обунасизларга таклиф", "💚 Обуначиларга раҳмат",
     "🔎 Фойдаланувчини қидириш", "⚠️ Муаммоли профиллар",
+    "🚀 Ҳозир ишлаётганлар",
     "⏳ Обунаси тугаётганлар", "1️⃣ 1 кун қолганлар", "3️⃣ 3 кун қолганлар",
 }
 
@@ -169,6 +170,7 @@ def admin_menu_kb() -> ReplyKeyboardMarkup:
 def admin_users_filter_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="🚀 Ҳозир ишлаётганлар")],
             [KeyboardButton(text="🔎 Фойдаланувчини қидириш")],
             [KeyboardButton(text="⚠️ Муаммоли профиллар")],
             [KeyboardButton(text="⏳ Обунаси тугаётганлар")],

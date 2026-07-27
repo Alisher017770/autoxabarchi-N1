@@ -58,6 +58,7 @@ from repository import (
     list_pending_payments,
     list_groups,
     list_problem_users,
+    list_running_user_summaries,
     list_user_ids,
     list_user_ids_by_subscription,
     list_user_summaries,
@@ -95,6 +96,7 @@ SUBSCRIPTION_OFFER_ACTION_TEXTS = {"🎁 Обунасизларга таклиф
 SUBSCRIBER_THANKS_ACTION_TEXTS = {"💚 Обуначиларга раҳмат", "💚 Obunachilarga rahmat"}
 USER_SEARCH_TEXTS = {"🔎 Фойдаланувчини қидириш", "Фойдаланувчини қидириш"}
 PROBLEM_USERS_TEXTS = {"⚠️ Муаммоли профиллар", "Муаммоли профиллар"}
+RUNNING_USERS_TEXTS = {"🚀 Ҳозир ишлаётганлар", "Ҳозир ишлаётганлар"}
 EXPIRING_USERS_TEXTS = {"⏳ Обунаси тугаётганлар", "Обунаси тугаётганлар"}
 EXPIRING_ONE_DAY_TEXTS = {"1️⃣ 1 кун қолганлар", "1 кун қолганлар"}
 EXPIRING_THREE_DAYS_TEXTS = {"3️⃣ 3 кун қолганлар", "3 кун қолганлар"}
@@ -192,6 +194,8 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
             await ask_admin_user_search(message, state)
         elif text in PROBLEM_USERS_TEXTS:
             await admin_problem_users(message)
+        elif text in RUNNING_USERS_TEXTS:
+            await admin_running_users(message)
         elif text in EXPIRING_USERS_TEXTS:
             await admin_expiring_users(message)
         elif text in EXPIRING_ONE_DAY_TEXTS:
@@ -637,6 +641,38 @@ async def admin_problem_users(message: Message):
     for item in users:
         reasons = "; ".join(html.escape(str(reason)) for reason in item["reasons"])
         lines.append(f"👤 {html.escape(str(item['first_name']))} · {item['user_id']}\n{reasons}")
+    await message.answer(
+        "\n\n".join(lines),
+        reply_markup=admin_user_results_kb(users),
+        parse_mode="HTML",
+    )
+
+
+@router.message(F.text.in_(RUNNING_USERS_TEXTS))
+async def admin_running_users(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    users = await list_running_user_summaries(limit=50)
+    if not users:
+        await message.answer(
+            "⏸ Ҳозир ҳеч ким гуруҳларга авто хабар юбормаяпти.",
+            reply_markup=admin_users_filter_kb(),
+        )
+        return
+    lines = [f"🚀 <b>Ҳозир ишлаётганлар</b>\nЖами: {len(users)} та\n"]
+    for item in users:
+        status = (
+            f"⚠️ {html.escape(str(item['issue_details']))}"
+            if item["issue_details"]
+            else "✅ ишлаяпти"
+        )
+        lines.append(
+            f"👤 {html.escape(str(item['first_name']))} · {item['user_id']}\n"
+            f"👥 Гуруҳлар: {item['groups_count']} та | "
+            f"⏱ Ҳар {_interval_label(item['interval_minutes'])}\n"
+            f"Ҳолат: {status}"
+        )
     await message.answer(
         "\n\n".join(lines),
         reply_markup=admin_user_results_kb(users),
@@ -1462,8 +1498,3 @@ async def receive_reject_reason(message: Message, state: FSMContext, bot: Bot):
 @router.message()
 async def unknown(message: Message):
     await message.answer("❓ Мен бу хабарни тушунмадим. /start босинг.")
-    expiring_user_actions_kb,
-    expiring_users_kb,
-    list_expiring_user_summaries,
-    list_problem_users,
-    search_users,

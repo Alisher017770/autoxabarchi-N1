@@ -377,6 +377,34 @@ async def list_problem_users(limit: int = 20) -> list[dict]:
         return items
 
 
+async def list_running_user_summaries(limit: int = 50) -> list[dict]:
+    async with async_session() as session:
+        group_counts = (
+            select(Group.profile, func.count(Group.id).label("groups_count"))
+            .group_by(Group.profile)
+            .subquery()
+        )
+        result = await session.execute(
+            select(UserAccount, Settings, BroadcastIssue, group_counts.c.groups_count)
+            .join(Settings, Settings.profile == cast(UserAccount.user_id, String))
+            .outerjoin(BroadcastIssue, BroadcastIssue.profile == Settings.profile)
+            .outerjoin(group_counts, group_counts.c.profile == Settings.profile)
+            .where(Settings.is_running.is_(True))
+            .order_by(UserAccount.updated_at.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "user_id": account.user_id,
+                "first_name": account.first_name or "-",
+                "groups_count": int(groups_count or 0),
+                "interval_minutes": settings.interval_minutes,
+                "issue_details": issue.details if issue else None,
+            }
+            for account, settings, issue, groups_count in result.all()
+        ]
+
+
 async def list_expiring_user_summaries(days_left: int, limit: int = 20) -> list[dict]:
     now = datetime.utcnow()
     upper = now + timedelta(days=days_left)
