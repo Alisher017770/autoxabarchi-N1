@@ -1,8 +1,10 @@
+import asyncio
 from datetime import datetime
 import html
 import re
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -15,6 +17,7 @@ from config import (
     WELCOME_STICKER_ID,
 )
 from keyboards import (
+    admin_audience_confirm_kb,
     admin_menu_kb,
     admin_users_filter_kb,
     dialog_pick_kb,
@@ -29,6 +32,8 @@ from keyboards import (
     phone_kb,
     profile_kb,
     settings_kb,
+    subscriber_thanks_kb,
+    subscription_offer_kb,
 )
 from repository import (
     activate_subscription,
@@ -45,6 +50,7 @@ from repository import (
     list_pending_payments,
     list_groups,
     list_user_ids,
+    list_user_ids_by_subscription,
     list_user_summaries,
     remove_group,
     revoke_subscription,
@@ -59,6 +65,18 @@ from states import AdStates
 from telethon_clients import confirm_login_code, confirm_login_password, get_user_dialog_groups, send_login_code
 
 router = Router()
+
+SUBSCRIPTION_OFFER_TEXT = (
+    f"🎁 <b>{html.escape(BOT_BRAND)} имкониятларидан тўлиқ фойдаланинг!</b>\n\n"
+    "Гуруҳларга хабарларни автоматик юборинг ва вақтингизни тежанг.\n\n"
+    "Обуна бўлиш учун қуйидаги тугмани босинг."
+)
+SUBSCRIBER_THANKS_TEXT = (
+    f"💚 <b>{html.escape(BOT_BRAND)} хизматини танлаганингиз учун раҳмат!</b>\n\n"
+    "Агар бот сизга фойдали бўлса, уни дўстларингизга ҳам тавсия қилинг.\n\n"
+    "Сизнинг ишончингиз биз учун муҳим!"
+)
+_audience_broadcasts_running: set[str] = set()
 
 BACK_TEXTS = {"⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga"}
 ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel"}
@@ -408,6 +426,101 @@ async def admin_unsubscribed_users(message: Message):
         await message.answer("Рухсат йўқ.")
         return
     await _show_filtered_admin_users(message, active=False)
+
+
+@router.message(F.text.in_({"🎁 Обунасизларга таклиф", "🎁 Obunasizlarga taklif"}))
+async def preview_subscription_offer(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    total = await count_users_by_subscription(active=False)
+    await message.answer(
+        f"🎁 <b>Обунасизларга юбориладиган хабар</b>\n"
+        f"Қабул қилувчилар: <b>{total}</b>\n\n"
+        f"{SUBSCRIPTION_OFFER_TEXT}\n\n"
+        "Юборишни тасдиқлайсизми?",
+        reply_markup=admin_audience_confirm_kb("inactive"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(F.text.in_({"💚 Обуначиларга раҳмат", "💚 Obunachilarga rahmat"}))
+async def preview_subscriber_thanks(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    total = await count_users_by_subscription(active=True)
+    await message.answer(
+        f"💚 <b>Обуначиларга юбориладиган хабар</b>\n"
+        f"Қабул қилувчилар: <b>{total}</b>\n\n"
+        f"{SUBSCRIBER_THANKS_TEXT}\n\n"
+        "Юборишни тасдиқлайсизми?",
+        reply_markup=admin_audience_confirm_kb("active"),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "audience_cancel")
+async def cancel_audience_broadcast(callback: CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer("Бекор қилинди")
+
+
+@router.callback_query(F.data.startswith("audience_send:"))
+async def send_audience_broadcast(callback: CallbackQuery, bot: Bot):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    target = callback.data.split(":", 1)[1]
+    if target not in {"active", "inactive"}:
+        await callback.answer("Нотўғри бўлим.", show_alert=True)
+        return
+    if target in _audience_broadcasts_running:
+        await callback.answer("Бу хабар ҳозир юборилмоқда.", show_alert=True)
+        return
+
+    _audience_broadcasts_running.add(target)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer("Юбориш бошланди")
+    active = target == "active"
+    text = SUBSCRIBER_THANKS_TEXT if active else SUBSCRIPTION_OFFER_TEXT
+    label = "обуначиларга" if active else "обунасизларга"
+    sent = 0
+    failed = 0
+    try:
+        user_ids = await list_user_ids_by_subscription(active)
+        me = await bot.get_me()
+        if me.username:
+            recipient_kb = subscriber_thanks_kb(me.username) if active else subscription_offer_kb(me.username)
+        else:
+            recipient_kb = None
+
+        for user_id in user_ids:
+            try:
+                await bot.send_message(user_id, text, reply_markup=recipient_kb, parse_mode="HTML")
+                sent += 1
+            except TelegramRetryAfter as exc:
+                await asyncio.sleep(exc.retry_after)
+                try:
+                    await bot.send_message(user_id, text, reply_markup=recipient_kb, parse_mode="HTML")
+                    sent += 1
+                except Exception:
+                    failed += 1
+            except Exception:
+                failed += 1
+            await asyncio.sleep(0.05)
+    finally:
+        _audience_broadcasts_running.discard(target)
+
+    await callback.message.answer(
+        f"✅ Хабар {label} юборилди.\n\n"
+        f"Етиб борди: {sent}\n"
+        f"Етиб бормади: {failed}",
+        reply_markup=admin_users_filter_kb(),
+    )
 
 
 @router.message(F.text.in_({"🎟 Обуна бериш", "Обуна бериш", "🎟 Obuna berish", "Obuna berish"}))
