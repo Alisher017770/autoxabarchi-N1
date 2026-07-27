@@ -7,7 +7,7 @@ from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
 from telethon.sessions import StringSession
 
 from config import API_ID, API_HASH
-from repository import get_user_session, save_user_session
+from repository import clear_user_session, get_user_session, save_user_session
 
 CONNECT_TIMEOUT_SECONDS = 25
 
@@ -105,10 +105,12 @@ async def get_user_client(user_id: int) -> TelegramClient:
         raise RuntimeError("Telegram аккаунтига уланиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
     except AuthKeyNotFound as exc:
         await client.disconnect()
+        await clear_user_session(user_id)
         raise RuntimeError("Сессия эскирган ёки нотўғри. Профилни қайта уланг.") from exc
 
     if not authorized:
         await client.disconnect()
+        await clear_user_session(user_id)
         raise RuntimeError("Профил авторизациядан ўтмаган. Профилни қайта уланг.")
 
     _clients[user_id] = client

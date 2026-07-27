@@ -164,6 +164,23 @@ async def get_user_session(user_id: int) -> str | None:
         return account.session_string if account else None
 
 
+async def clear_user_session(user_id: int) -> None:
+    """Remove a Telegram session that is no longer authorized.
+
+    Subscription data is intentionally kept: reconnecting a Telegram profile
+    must not make a paid user purchase the subscription again.
+    """
+    async with async_session() as session:
+        result = await session.execute(select(UserAccount).where(UserAccount.user_id == user_id))
+        account = result.scalar_one_or_none()
+        if account is None:
+            return
+        account.phone = None
+        account.session_string = None
+        account.updated_at = datetime.utcnow()
+        await session.commit()
+
+
 async def get_user_account(user_id: int) -> UserAccount | None:
     async with async_session() as session:
         result = await session.execute(select(UserAccount).where(UserAccount.user_id == user_id))
@@ -223,6 +240,17 @@ async def create_pending_payment(user_id: int, file_id: str, file_type: str) -> 
 async def get_pending_payment(payment_id: int) -> PendingPayment | None:
     async with async_session() as session:
         result = await session.execute(select(PendingPayment).where(PendingPayment.id == payment_id))
+        return result.scalar_one_or_none()
+
+
+async def get_latest_pending_payment_for_user(user_id: int) -> PendingPayment | None:
+    async with async_session() as session:
+        result = await session.execute(
+            select(PendingPayment)
+            .where(PendingPayment.user_id == user_id, PendingPayment.status == "pending")
+            .order_by(PendingPayment.created_at.desc(), PendingPayment.id.desc())
+            .limit(1)
+        )
         return result.scalar_one_or_none()
 
 
