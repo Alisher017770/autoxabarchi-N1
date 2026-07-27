@@ -1,4 +1,5 @@
 from datetime import datetime
+import html
 import re
 
 from aiogram import Bot, F, Router
@@ -368,12 +369,16 @@ async def admin_users(message: Message):
         linked = "уланган" if item["linked"] else "уланмаган"
         sub = _format_until(item["active_until"]) if item["active_until"] else "йўқ"
         active = "актив" if item["active"] else "актив эмас"
+        user_id = int(item["user_id"])
+        profile_url = f"tg://user?id={user_id}"
+        safe_name = html.escape(str(item["first_name"] or "-"))
         lines.append(
-            f"{item['user_id']} | {item['first_name']}\n"
+            f'<a href="{profile_url}">{user_id}</a> | '
+            f'<a href="{profile_url}">{safe_name}</a>\n'
             f"Профил: {linked} | Обуна: {active}\n"
             f"Гача: {sub}"
         )
-    await message.answer("\n\n".join(lines), reply_markup=admin_menu_kb())
+    await message.answer("\n\n".join(lines), reply_markup=admin_menu_kb(), parse_mode="HTML")
 
 
 @router.message(F.text.in_({"🎟 Обуна бериш", "Обуна бериш", "🎟 Obuna berish", "Obuna berish"}))
