@@ -12,6 +12,7 @@ RESERVED_MESSAGE_TEXTS = {
     "👤 Профил улаш", "Профил улаш", "👤 Profil ulash", "Profil ulash",
     "💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish",
     "⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда",
+    "🆘 Админ билан боғланиш", "Админ билан боғланиш",
     "📱 Телефон орқали улаш", "Телефон орқали улаш",
     "👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar",
     "📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати",
@@ -58,6 +59,8 @@ def main_menu_kb(
             [KeyboardButton(text="🚀 Старт / Стоп")],
             [KeyboardButton(text="⚙️ Созламалар")],
         ])
+    if not is_admin:
+        keyboard.append([KeyboardButton(text="🆘 Админ билан боғланиш")])
     if is_admin:
         keyboard.append([KeyboardButton(text="🛠 Админ панел")])
     return ReplyKeyboardMarkup(
@@ -158,6 +161,14 @@ def payment_admin_kb(payment_id: int) -> InlineKeyboardMarkup:
     kb.button(text="✅ Тасдиқлаш", callback_data=f"payok:{payment_id}")
     kb.button(text="❌ Рад этиш", callback_data=f"payno:{payment_id}")
     kb.adjust(2)
+    return kb.as_markup()
+
+
+def support_admin_kb(user_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✍️ Жавоб бериш", callback_data=f"supportreply:{user_id}")
+    kb.button(text="👤 Профилни очиш", url=f"tg://user?id={user_id}")
+    kb.adjust(1)
     return kb.as_markup()
 
 

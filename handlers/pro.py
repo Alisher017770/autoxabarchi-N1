@@ -39,6 +39,7 @@ from keyboards import (
     profile_kb,
     RESERVED_MESSAGE_TEXTS,
     settings_kb,
+    support_admin_kb,
     subscriber_thanks_kb,
     subscription_offer_kb,
 )
@@ -115,6 +116,7 @@ ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "�
 PROFILE_TEXTS = {"👤 Профил улаш", "Профил улаш", "👤 Profil ulash", "Profil ulash"}
 SUBSCRIBE_TEXTS = {"💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish"}
 PAYMENT_PENDING_TEXTS = {"⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда"}
+SUPPORT_TEXTS = {"🆘 Админ билан боғланиш", "Админ билан боғланиш"}
 PHONE_LOGIN_TEXTS = {"📱 Телефон орқали улаш", "Телефон орқали улаш", "📱 Telefon orqali ulash", "Telefon orqali ulash"}
 GROUPS_TEXTS = {"👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar"}
 GROUP_LIST_TEXTS = {"📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати", "📋 Guruhlar ro'yxati", "Guruhlar ro'yxati"}
@@ -1105,6 +1107,98 @@ async def subscribe_button(message: Message, state: FSMContext):
 @router.message(F.text.in_(PAYMENT_PENDING_TEXTS))
 async def pending_payment_button(message: Message, state: FSMContext):
     await _show_payment_request(message, state)
+
+
+@router.message(F.text.in_(SUPPORT_TEXTS))
+async def ask_support_message(message: Message, state: FSMContext):
+    if _is_admin(message):
+        await message.answer("Сиз админсиз.", reply_markup=admin_menu_kb())
+        return
+    await state.set_state(AdStates.waiting_support_message)
+    await message.answer(
+        "🆘 Муаммони қисқа ва тушунарли қилиб ёзинг.\n\n"
+        "Матн, расм ёки файл юборишингиз мумкин. Админга исмингиз ва ID рақамингиз билан етказаман.\n\n"
+        "Бекор қилиш учун «⬅️ Орқага»ни босинг."
+    )
+
+
+@router.message(AdStates.waiting_support_message)
+async def receive_support_message(message: Message, state: FSMContext, bot: Bot):
+    if _is_back_text(message):
+        await state.clear()
+        await _show_home(message)
+        return
+    if not (message.text or message.photo or message.document or message.video or message.voice):
+        await message.answer("Матн, расм, видео, овозли хабар ёки файл юборинг.")
+        return
+
+    user = message.from_user
+    username = f"@{user.username}" if user.username else "йўқ"
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            "🆘 Янги ёрдам сўрови\n\n"
+            f"Фойдаланувчи: {user.full_name}\n"
+            f"Username: {username}\n"
+            f"ID: {user.id}",
+            reply_markup=support_admin_kb(user.id),
+        )
+        await message.copy_to(ADMIN_ID)
+    except Exception:
+        logger.exception("[%s] support message could not be delivered to admin", user.id)
+        await message.answer(
+            "❌ Хабар админга етказилмади. Бироздан кейин қайта уриниб кўринг.",
+            reply_markup=await _main_kb(message),
+        )
+        await state.clear()
+        return
+
+    await state.clear()
+    await message.answer(
+        "✅ Хабарингиз админга юборилди. Жавобини кутинг.",
+        reply_markup=await _main_kb(message),
+    )
+
+
+@router.callback_query(F.data.startswith("supportreply:"))
+async def ask_support_reply(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    user_id = int(callback.data.split(":", 1)[1])
+    await state.update_data(support_reply_user_id=user_id)
+    await state.set_state(AdStates.waiting_support_reply)
+    await callback.message.answer(
+        f"✍️ Фойдаланувчига жавоб ёзинг.\nID: {user_id}\n\n"
+        "Матн, расм ёки файл юбориш мумкин."
+    )
+    await callback.answer()
+
+
+@router.message(AdStates.waiting_support_reply)
+async def receive_support_reply(message: Message, state: FSMContext, bot: Bot):
+    if await _cancel_admin_state(message, state):
+        return
+    if not _is_admin(message):
+        await state.clear()
+        return
+    if not (message.text or message.photo or message.document or message.video or message.voice):
+        await message.answer("Матн, расм, видео, овозли хабар ёки файл юборинг.")
+        return
+
+    data = await state.get_data()
+    user_id = int(data["support_reply_user_id"])
+    try:
+        await bot.send_message(user_id, "✉️ Админдан жавоб:")
+        await message.copy_to(user_id)
+    except Exception:
+        logger.exception("Support reply could not be delivered to user %s", user_id)
+        await message.answer("❌ Жавоб етказилмади. Фойдаланувчи ботни блоклаган бўлиши мумкин.")
+        await state.clear()
+        return
+
+    await state.clear()
+    await message.answer(f"✅ Жавоб юборилди.\nФойдаланувчи ID: {user_id}", reply_markup=admin_menu_kb())
 
 
 @router.message(F.text.in_(PHONE_LOGIN_TEXTS))
