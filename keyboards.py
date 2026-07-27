@@ -133,6 +133,17 @@ def admin_menu_kb() -> ReplyKeyboardMarkup:
     )
 
 
+def admin_users_filter_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="✅ Обуна бўлганлар")],
+            [KeyboardButton(text="❌ Обуна бўлмаганлар")],
+            [KeyboardButton(text="🛠 Админ панел")],
+        ],
+        resize_keyboard=True,
+    )
+
+
 def payment_settings_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[

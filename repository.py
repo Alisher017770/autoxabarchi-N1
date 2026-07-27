@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
@@ -224,15 +224,20 @@ async def set_payment_status(payment_id: int, status: str):
             await session.commit()
 
 
-async def list_user_summaries(limit: int = 20) -> list[dict]:
+async def list_user_summaries(limit: int = 20, active: bool | None = None) -> list[dict]:
     now = datetime.utcnow()
     async with async_session() as session:
-        result = await session.execute(
+        query = (
             select(UserAccount, Subscription)
             .outerjoin(Subscription, Subscription.user_id == UserAccount.user_id)
             .order_by(UserAccount.updated_at.desc())
             .limit(limit)
         )
+        if active is True:
+            query = query.where(Subscription.active_until > now)
+        elif active is False:
+            query = query.where(or_(Subscription.active_until.is_(None), Subscription.active_until <= now))
+        result = await session.execute(query)
         items = []
         for account, subscription in result.all():
             active_until = subscription.active_until if subscription else None
@@ -245,6 +250,21 @@ async def list_user_summaries(limit: int = 20) -> list[dict]:
                 "active": bool(active_until and active_until > now),
             })
         return items
+
+
+async def count_users_by_subscription(active: bool) -> int:
+    now = datetime.utcnow()
+    async with async_session() as session:
+        query = (
+            select(func.count())
+            .select_from(UserAccount)
+            .outerjoin(Subscription, Subscription.user_id == UserAccount.user_id)
+        )
+        if active:
+            query = query.where(Subscription.active_until > now)
+        else:
+            query = query.where(or_(Subscription.active_until.is_(None), Subscription.active_until <= now))
+        return int(await session.scalar(query) or 0)
 
 
 async def get_admin_stats() -> dict:
