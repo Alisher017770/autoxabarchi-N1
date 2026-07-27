@@ -5,7 +5,14 @@ import time
 from telethon.errors import FloodWaitError, ChatWriteForbiddenError, UserBannedInChannelError
 
 from config import MAX_RUN_MINUTES, REST_DURATION_MINUTES, REST_EVERY_MINUTES
-from repository import get_settings, list_groups, set_running, has_active_subscription
+from repository import (
+    clear_broadcast_issue,
+    get_settings,
+    has_active_subscription,
+    list_groups,
+    set_broadcast_issue,
+    set_running,
+)
 from telethon_clients import get_user_client
 
 logger = logging.getLogger(__name__)
@@ -65,7 +72,14 @@ async def _broadcast_loop(profile: str):
                 break
 
             if groups:
-                client = await get_user_client(user_id)
+                await clear_broadcast_issue(profile)
+                try:
+                    client = await get_user_client(user_id)
+                except Exception as exc:
+                    await set_broadcast_issue(profile, "profile", f"Telegram профилига уланмади: {exc}")
+                    await set_running(profile, False)
+                    logger.exception("[%s] Telegram профилига уланмади", profile)
+                    break
                 for group in groups:
                     try:
                         await client.send_message(group.chat_id, text, parse_mode="html")
@@ -73,8 +87,14 @@ async def _broadcast_loop(profile: str):
                         logger.warning("[%s] FloodWait: %ss kutilmoqda", profile, exc.seconds)
                         await asyncio.sleep(exc.seconds)
                     except (ChatWriteForbiddenError, UserBannedInChannelError):
+                        await set_broadcast_issue(
+                            profile,
+                            "write_forbidden",
+                            f"«{group.title}» гуруҳига ёзиш ҳуқуқи йўқ",
+                        )
                         logger.warning("[%s] %s guruhiga yozib bo'lmaydi", profile, group.title)
-                    except Exception:
+                    except Exception as exc:
+                        await set_broadcast_issue(profile, "send_error", f"«{group.title}»: {exc}")
                         logger.exception("[%s] xato (%s)", profile, group.title)
                     next_rest_at, can_continue = await _limited_sleep(profile, 2, started_at, next_rest_at)
                     if not can_continue:

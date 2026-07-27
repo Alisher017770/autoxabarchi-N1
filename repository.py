@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, delete, func, or_, update
+from sqlalchemy import select, delete, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import BotConfig, Group, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import BotConfig, BroadcastIssue, Group, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 
 
 async def get_settings(profile: str) -> Settings:
@@ -261,6 +261,162 @@ async def list_user_summaries(limit: int = 20, active: bool | None = None) -> li
                 "active": bool(active_until and active_until > now),
             })
         return items
+
+
+async def search_users(query_text: str, limit: int = 20) -> list[dict]:
+    query_text = query_text.strip()
+    if not query_text:
+        return []
+    pattern = f"%{query_text}%"
+    now = datetime.utcnow()
+    async with async_session() as session:
+        query = (
+            select(UserAccount, Subscription)
+            .outerjoin(Subscription, Subscription.user_id == UserAccount.user_id)
+            .where(
+                or_(
+                    cast(UserAccount.user_id, String).like(pattern),
+                    UserAccount.first_name.ilike(pattern),
+                    UserAccount.phone.ilike(pattern),
+                )
+            )
+            .order_by(UserAccount.updated_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(query)
+        return [
+            {
+                "user_id": account.user_id,
+                "first_name": account.first_name or "-",
+                "linked": bool(account.session_string),
+                "phone": account.phone or "-",
+                "active_until": subscription.active_until if subscription else None,
+                "active": bool(subscription and subscription.active_until and subscription.active_until > now),
+            }
+            for account, subscription in result.all()
+        ]
+
+
+async def get_admin_user_card(user_id: int) -> dict | None:
+    now = datetime.utcnow()
+    profile = user_profile_key(user_id)
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserAccount, Subscription, Settings, BroadcastIssue)
+            .outerjoin(Subscription, Subscription.user_id == UserAccount.user_id)
+            .outerjoin(Settings, Settings.profile == cast(UserAccount.user_id, String))
+            .outerjoin(BroadcastIssue, BroadcastIssue.profile == cast(UserAccount.user_id, String))
+            .where(UserAccount.user_id == user_id)
+        )
+        row = result.one_or_none()
+        if row is None:
+            return None
+        account, subscription, settings, issue = row
+        groups_count = int(await session.scalar(
+            select(func.count()).select_from(Group).where(Group.profile == profile)
+        ) or 0)
+        active_until = subscription.active_until if subscription else None
+        return {
+            "user_id": account.user_id,
+            "first_name": account.first_name or "-",
+            "phone": account.phone or "-",
+            "linked": bool(account.session_string),
+            "active_until": active_until,
+            "active": bool(active_until and active_until > now),
+            "groups_count": groups_count,
+            "message_ready": bool(settings and settings.message_text),
+            "is_running": bool(settings and settings.is_running),
+            "issue_type": issue.issue_type if issue else None,
+            "issue_details": issue.details if issue else None,
+            "issue_updated_at": issue.updated_at if issue else None,
+        }
+
+
+async def list_problem_users(limit: int = 20) -> list[dict]:
+    now = datetime.utcnow()
+    async with async_session() as session:
+        group_counts = (
+            select(Group.profile, func.count(Group.id).label("groups_count"))
+            .group_by(Group.profile)
+            .subquery()
+        )
+        result = await session.execute(
+            select(UserAccount, Subscription, Settings, BroadcastIssue, group_counts.c.groups_count)
+            .outerjoin(Subscription, Subscription.user_id == UserAccount.user_id)
+            .outerjoin(Settings, Settings.profile == cast(UserAccount.user_id, String))
+            .outerjoin(BroadcastIssue, BroadcastIssue.profile == cast(UserAccount.user_id, String))
+            .outerjoin(group_counts, group_counts.c.profile == cast(UserAccount.user_id, String))
+            .where(
+                or_(
+                    UserAccount.session_string.is_(None),
+                    BroadcastIssue.profile.is_not(None),
+                    (Subscription.active_until > now) & (func.coalesce(group_counts.c.groups_count, 0) == 0),
+                    (Subscription.active_until > now) & or_(Settings.message_text.is_(None), Settings.profile.is_(None)),
+                )
+            )
+            .order_by(UserAccount.updated_at.desc())
+            .limit(limit)
+        )
+        items = []
+        for account, subscription, settings, issue, groups_count in result.all():
+            reasons = []
+            if not account.session_string:
+                reasons.append("профил уланмаган")
+            if subscription and subscription.active_until and subscription.active_until > now:
+                if not groups_count:
+                    reasons.append("гуруҳ қўшилмаган")
+                if not settings or not settings.message_text:
+                    reasons.append("хабар матни йўқ")
+            if issue:
+                reasons.append(issue.details)
+            items.append({
+                "user_id": account.user_id,
+                "first_name": account.first_name or "-",
+                "reasons": reasons,
+            })
+        return items
+
+
+async def list_expiring_user_summaries(days_left: int, limit: int = 20) -> list[dict]:
+    now = datetime.utcnow()
+    upper = now + timedelta(days=days_left)
+    lower = now if days_left == 1 else now + timedelta(days=1)
+    async with async_session() as session:
+        result = await session.execute(
+            select(UserAccount, Subscription)
+            .join(Subscription, Subscription.user_id == UserAccount.user_id)
+            .where(Subscription.active_until > lower)
+            .where(Subscription.active_until <= upper)
+            .order_by(Subscription.active_until.asc())
+            .limit(limit)
+        )
+        return [
+            {
+                "user_id": account.user_id,
+                "first_name": account.first_name or "-",
+                "active_until": subscription.active_until,
+            }
+            for account, subscription in result.all()
+        ]
+
+
+async def set_broadcast_issue(profile: str, issue_type: str, details: str):
+    async with async_session() as session:
+        issue = await session.get(BroadcastIssue, profile)
+        if issue is None:
+            issue = BroadcastIssue(profile=profile, issue_type=issue_type, details=details)
+            session.add(issue)
+        else:
+            issue.issue_type = issue_type
+            issue.details = details
+            issue.updated_at = datetime.utcnow()
+        await session.commit()
+
+
+async def clear_broadcast_issue(profile: str):
+    async with async_session() as session:
+        await session.execute(delete(BroadcastIssue).where(BroadcastIssue.profile == profile))
+        await session.commit()
 
 
 async def count_users_by_subscription(active: bool) -> int:
