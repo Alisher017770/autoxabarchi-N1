@@ -36,6 +36,7 @@ _notification_bot: Bot | None = None
 REST_EVERY_SECONDS = REST_EVERY_MINUTES * 60
 REST_DURATION_SECONDS = REST_DURATION_MINUTES * 60
 MAX_RUN_SECONDS = MAX_RUN_MINUTES * 60
+MIN_FORBIDDEN_ATTEMPTS_TO_STOP = 5
 
 SPAM_ERROR_MARKERS = (
     "PEER_FLOOD",
@@ -56,6 +57,22 @@ def _is_account_spam_error(exc: Exception) -> bool:
     return any(marker in error_text for marker in SPAM_ERROR_MARKERS)
 
 
+def _all_attempts_write_forbidden(attempted: int, sent: int, write_forbidden: int) -> bool:
+    return (
+        attempted >= MIN_FORBIDDEN_ATTEMPTS_TO_STOP
+        and sent == 0
+        and write_forbidden == attempted
+    )
+
+
+def _spam_check_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🛡 Spam holatini tekshirish", url="https://t.me/SpamBot")]
+        ]
+    )
+
+
 async def _stop_spam_restricted_profile(profile: str, exc: Exception) -> None:
     details = f"Telegram spam cheklovi: {type(exc).__name__}: {exc}"
     await set_broadcast_issue(profile, "spam_restricted", details)
@@ -65,11 +82,6 @@ async def _stop_spam_restricted_profile(profile: str, exc: Exception) -> None:
     if _notification_bot is None:
         return
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🛡 Spam holatini tekshirish", url="https://t.me/SpamBot")]
-        ]
-    )
     try:
         await _notification_bot.send_message(
             int(profile),
@@ -77,7 +89,7 @@ async def _stop_spam_restricted_profile(profile: str, exc: Exception) -> None:
             "Bekorga qayta-qayta urinmasligi uchun xabar tarqatish avtomatik to‘xtatildi. "
             "Quyidagi tugma orqali @SpamBot holatini tekshiring. Cheklov olib tashlangach "
             "«🚀 Старт / Стоп» tugmasini qayta bosishingiz mumkin.",
-            reply_markup=keyboard,
+            reply_markup=_spam_check_keyboard(),
         )
     except Exception:
         logger.exception("[%s] spam cheklovi haqida foydalanuvchiga xabar yuborilmadi", profile)
@@ -93,6 +105,40 @@ async def _stop_spam_restricted_profile(profile: str, exc: Exception) -> None:
             )
         except Exception:
             logger.exception("[%s] spam cheklovi haqida adminga xabar yuborilmadi", profile)
+
+
+async def _stop_all_groups_forbidden(profile: str, attempted: int) -> None:
+    details = f"{attempted} та гуруҳнинг барчаси хабар юборишни рад этди; юборилди: 0 та"
+    await set_broadcast_issue(profile, "suspected_spam", details)
+    await set_running(profile, False)
+    logger.error("[%s] %s/%s гуруҳга юборилмади, тарқатиш тўхтатилди", profile, attempted, attempted)
+
+    if _notification_bot is None:
+        return
+
+    try:
+        await _notification_bot.send_message(
+            int(profile),
+            "⛔️ Хабар юбориш автоматик тўхтатилди.\n\n"
+            f"Натижа: 0/{attempted} та гуруҳга юборилди. Барча гуруҳлар ёзишни рад этди. "
+            "Telegram аниқ spam кодини бермади, аммо профилда spam чеклови бўлиши мумкин. "
+            "Қуйидаги тугма орқали @SpamBot ҳолатини текширинг.",
+            reply_markup=_spam_check_keyboard(),
+        )
+    except Exception:
+        logger.exception("[%s] умумий ёзиш чеклови ҳақида фойдаланувчига хабар берилмади", profile)
+
+    if ADMIN_ID and ADMIN_ID != int(profile):
+        try:
+            await _notification_bot.send_message(
+                ADMIN_ID,
+                "⚠️ Эҳтимолий spam чекловидаги профил автоматик тўхтатилди.\n"
+                f"Фойдаланувчи ID: {profile}\n"
+                f"Натижа: 0/{attempted} та гуруҳга юборилди.\n\n"
+                "Профил «⚠️ Муаммоли профиллар» бўлимига қўшилди.",
+            )
+        except Exception:
+            logger.exception("[%s] умумий ёзиш чеклови ҳақида админга хабар берилмади", profile)
 
 
 async def _limited_sleep(profile: str, seconds: float, started_at: float, next_rest_at: float) -> tuple[float, bool]:
@@ -145,6 +191,9 @@ async def _broadcast_loop(profile: str):
             if groups:
                 await clear_broadcast_issue(profile)
                 cooldowns = await get_group_cooldowns(profile)
+                attempted_count = 0
+                sent_count = 0
+                write_forbidden_count = 0
                 try:
                     client = await get_user_client(user_id)
                 except Exception as exc:
@@ -164,7 +213,9 @@ async def _broadcast_loop(profile: str):
                         )
                         continue
                     try:
+                        attempted_count += 1
                         await client.send_message(group.chat_id, text, parse_mode="html")
+                        sent_count += 1
                         if next_send_at:
                             await clear_group_cooldown(profile, group.chat_id)
                     except (PeerFloodError, UserRestrictedError) as exc:
@@ -184,6 +235,7 @@ async def _broadcast_loop(profile: str):
                         )
                         logger.warning("[%s] %s guruhida sekin rejim: %ss", profile, group.title, exc.seconds)
                     except (ChatWriteForbiddenError, UserBannedInChannelError):
+                        write_forbidden_count += 1
                         await set_broadcast_issue(
                             profile,
                             "write_forbidden",
@@ -200,6 +252,14 @@ async def _broadcast_loop(profile: str):
                     next_rest_at, can_continue = await _limited_sleep(profile, 2, started_at, next_rest_at)
                     if not can_continue:
                         break
+
+                if can_continue and _all_attempts_write_forbidden(
+                    attempted_count,
+                    sent_count,
+                    write_forbidden_count,
+                ):
+                    await _stop_all_groups_forbidden(profile, attempted_count)
+                    break
 
             settings = await get_settings(profile)
             if not settings.is_running:

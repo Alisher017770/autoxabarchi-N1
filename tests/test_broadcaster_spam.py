@@ -16,6 +16,12 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(broadcaster._is_account_spam_error(Exception("CHAT_SEND_PLAIN_FORBIDDEN")))
         self.assertFalse(broadcaster._is_account_spam_error(Exception("CHAT_WRITE_FORBIDDEN")))
 
+    def test_stops_only_when_every_attempt_is_write_forbidden(self):
+        self.assertTrue(broadcaster._all_attempts_write_forbidden(22, 0, 22))
+        self.assertFalse(broadcaster._all_attempts_write_forbidden(4, 0, 4))
+        self.assertFalse(broadcaster._all_attempts_write_forbidden(22, 1, 21))
+        self.assertFalse(broadcaster._all_attempts_write_forbidden(22, 0, 21))
+
     async def test_stops_records_and_notifies_restricted_profile(self):
         bot = AsyncMock()
         broadcaster.configure_broadcaster_bot(bot)
@@ -33,6 +39,22 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.send_message.await_count, 2)
         self.assertEqual(bot.send_message.await_args_list[0].args[0], 123)
         self.assertEqual(bot.send_message.await_args_list[1].args[0], 999)
+
+    async def test_stops_and_notifies_when_all_groups_forbid_writing(self):
+        bot = AsyncMock()
+        broadcaster.configure_broadcaster_bot(bot)
+
+        with (
+            patch.object(broadcaster, "set_broadcast_issue", new=AsyncMock()) as set_issue,
+            patch.object(broadcaster, "set_running", new=AsyncMock()) as set_running,
+            patch.object(broadcaster, "ADMIN_ID", 999),
+        ):
+            await broadcaster._stop_all_groups_forbidden("123", 22)
+
+        self.assertEqual(set_issue.await_args.args[:2], ("123", "suspected_spam"))
+        set_running.assert_awaited_once_with("123", False)
+        self.assertEqual(bot.send_message.await_count, 2)
+        self.assertIn("0/22", bot.send_message.await_args_list[0].args[1])
 
     async def test_start_does_not_claim_success_when_profile_connection_fails(self):
         connection_error = RuntimeError("Профилни қайта уланг.")
