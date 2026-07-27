@@ -4,7 +4,7 @@ from sqlalchemy import select, delete, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import BotConfig, BroadcastIssue, Group, GroupCooldown, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import BotConfig, BroadcastIssue, Group, GroupCooldown, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 
 
 async def get_settings(profile: str) -> Settings:
@@ -110,7 +110,43 @@ async def remove_group(profile: str, chat_id: int):
                 GroupCooldown.chat_id == chat_id,
             )
         )
+        await session.execute(
+            delete(GroupSuccess).where(
+                GroupSuccess.profile == profile,
+                GroupSuccess.chat_id == chat_id,
+            )
+        )
         await session.commit()
+
+
+async def mark_group_success(profile: str, chat_id: int) -> None:
+    async with async_session() as session:
+        success = await session.get(GroupSuccess, (profile, chat_id))
+        if success is None:
+            success = GroupSuccess(profile=profile, chat_id=chat_id)
+            session.add(success)
+        success.last_success_at = datetime.utcnow()
+        await session.commit()
+
+
+async def list_spam_recheck_groups(profile: str, limit: int = 5) -> list[Group]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(Group)
+            .outerjoin(
+                GroupSuccess,
+                (GroupSuccess.profile == Group.profile)
+                & (GroupSuccess.chat_id == Group.chat_id),
+            )
+            .where(Group.profile == profile)
+            .order_by(
+                GroupSuccess.last_success_at.is_(None),
+                GroupSuccess.last_success_at.desc(),
+                Group.id,
+            )
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
 
 async def get_group_cooldowns(profile: str) -> dict[int, datetime]:
@@ -513,6 +549,11 @@ async def set_broadcast_issue(profile: str, issue_type: str, details: str):
             issue.details = details
             issue.updated_at = datetime.utcnow()
         await session.commit()
+
+
+async def get_broadcast_issue(profile: str) -> BroadcastIssue | None:
+    async with async_session() as session:
+        return await session.get(BroadcastIssue, profile)
 
 
 async def clear_broadcast_issue(profile: str):

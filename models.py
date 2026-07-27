@@ -25,6 +25,15 @@ class GroupCooldown(Base):
     next_send_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class GroupSuccess(Base):
+    """A group that has accepted a message from this profile before."""
+    __tablename__ = "group_successes"
+
+    profile: Mapped[str] = mapped_column(String(20), primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    last_success_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Settings(Base):
     """Har bir profil uchun bitta qator: xabar matni, interval, holat."""
     __tablename__ = "settings"

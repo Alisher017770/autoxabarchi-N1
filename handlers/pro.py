@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from broadcaster import start_broadcast, stop_broadcast
+from broadcaster import retry_spam_check, spam_check_keyboard, start_broadcast, stop_broadcast
 from config import (
     ADMIN_ID,
     BOT_BRAND,
@@ -51,6 +51,7 @@ from repository import (
     ensure_user,
     get_admin_stats,
     get_admin_user_card,
+    get_broadcast_issue,
     get_payment_config,
     get_pending_payment,
     get_latest_pending_payment_for_user,
@@ -1533,6 +1534,13 @@ async def start_or_stop(message: Message, state: FSMContext):
 
     started, error = await start_broadcast(profile)
     if not started:
+        issue = await get_broadcast_issue(profile)
+        if issue and issue.issue_type in {"spam_restricted", "suspected_spam"}:
+            await message.answer(
+                "⛔️ Хабар юбориш ишга тушмади.\n\n" + (error or "Spam ҳолатини қайта текширинг."),
+                reply_markup=spam_check_keyboard(profile),
+            )
+            return
         await message.answer(
             "⛔️ Хабар юбориш ишга тушмади.\n\n" + (error or "Telegram профилига уланиб бўлмади."),
             reply_markup=await _main_kb(message),
@@ -1548,6 +1556,26 @@ async def start_or_stop(message: Message, state: FSMContext):
         "⏹ 12 соатдан кейин автоматик тўхтайди. Қайта бошлаш учун «🚀 Старт / Стоп» ни босинг.",
         reply_markup=await _main_kb(message),
     )
+
+
+@router.callback_query(F.data.startswith("retryspam:"))
+async def retry_spam_cb(callback: CallbackQuery):
+    profile = callback.data.split(":", 1)[1]
+    if profile != user_profile_key(callback.from_user.id):
+        await callback.answer("Бу текширув бошқа профилга тегишли.", show_alert=True)
+        return
+
+    await callback.answer("Текширилмоқда...")
+    success, result_text = await retry_spam_check(profile)
+    if success:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await callback.message.answer(result_text)
+        return
+
+    await callback.message.answer(result_text, reply_markup=spam_check_keyboard(profile))
 
 
 @router.message(AdStates.waiting_payment_receipt)
