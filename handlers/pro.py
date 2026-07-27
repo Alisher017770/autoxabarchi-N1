@@ -16,6 +16,7 @@ from config import (
 )
 from keyboards import (
     admin_menu_kb,
+    admin_users_filter_kb,
     dialog_pick_kb,
     group_delete_kb,
     groups_kb,
@@ -33,6 +34,7 @@ from repository import (
     activate_subscription,
     add_group,
     create_pending_payment,
+    count_users_by_subscription,
     ensure_user,
     get_admin_stats,
     get_payment_config,
@@ -360,11 +362,20 @@ async def admin_users(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
         return
-    users = await list_user_summaries(limit=20)
+    await message.answer(
+        "👥 Фойдаланувчилар\n\nКеракли рўйхатни танланг:",
+        reply_markup=admin_users_filter_kb(),
+    )
+
+
+async def _show_filtered_admin_users(message: Message, active: bool):
+    users = await list_user_summaries(limit=20, active=active)
+    total = await count_users_by_subscription(active)
+    title = "✅ Обуна бўлганлар" if active else "❌ Обуна бўлмаганлар"
     if not users:
-        await message.answer("Ҳозирча фойдаланувчи йўқ.", reply_markup=admin_menu_kb())
+        await message.answer(f"{title}\n\nҲозирча фойдаланувчи йўқ.", reply_markup=admin_users_filter_kb())
         return
-    lines = ["👥 Охирги фойдаланувчилар\n"]
+    lines = [f"{title}\nЖами: {total}\n"]
     for item in users:
         linked = "уланган" if item["linked"] else "уланмаган"
         sub = _format_until(item["active_until"]) if item["active_until"] else "йўқ"
@@ -378,7 +389,25 @@ async def admin_users(message: Message):
             f"Профил: {linked} | Обуна: {active}\n"
             f"Гача: {sub}"
         )
-    await message.answer("\n\n".join(lines), reply_markup=admin_menu_kb(), parse_mode="HTML")
+    if total > len(users):
+        lines.append(f"Фақат охирги {len(users)} та фойдаланувчи кўрсатилди.")
+    await message.answer("\n\n".join(lines), reply_markup=admin_users_filter_kb(), parse_mode="HTML")
+
+
+@router.message(F.text.in_({"✅ Обуна бўлганлар", "✅ Obuna bo'lganlar"}))
+async def admin_subscribed_users(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await _show_filtered_admin_users(message, active=True)
+
+
+@router.message(F.text.in_({"❌ Обуна бўлмаганлар", "❌ Obuna bo'lmaganlar"}))
+async def admin_unsubscribed_users(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await _show_filtered_admin_users(message, active=False)
 
 
 @router.message(F.text.in_({"🎟 Обуна бериш", "Обуна бериш", "🎟 Obuna berish", "Obuna berish"}))
