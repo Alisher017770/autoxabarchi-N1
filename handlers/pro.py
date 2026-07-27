@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 import html
+import logging
 import re
 
 from aiogram import Bot, F, Router
@@ -51,6 +52,7 @@ from repository import (
     get_admin_user_card,
     get_payment_config,
     get_pending_payment,
+    get_latest_pending_payment_for_user,
     get_settings,
     get_user_account,
     has_active_subscription,
@@ -73,9 +75,16 @@ from repository import (
     user_profile_key,
 )
 from states import AdStates
-from telethon_clients import confirm_login_code, confirm_login_password, get_user_dialog_groups, send_login_code
+from telethon_clients import (
+    confirm_login_code,
+    confirm_login_password,
+    get_user_client,
+    get_user_dialog_groups,
+    send_login_code,
+)
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 SUBSCRIPTION_OFFER_TEXT = (
     f"🎁 <b>{html.escape(BOT_BRAND)} имкониятларидан тўлиқ фойдаланинг!</b>\n\n"
@@ -105,6 +114,7 @@ BACK_TEXTS = {"⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga"}
 ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel"}
 PROFILE_TEXTS = {"👤 Профил улаш", "Профил улаш", "👤 Profil ulash", "Profil ulash"}
 SUBSCRIBE_TEXTS = {"💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish"}
+PAYMENT_PENDING_TEXTS = {"⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда"}
 PHONE_LOGIN_TEXTS = {"📱 Телефон орқали улаш", "Телефон орқали улаш", "📱 Telefon orqali ulash", "Telefon orqali ulash"}
 GROUPS_TEXTS = {"👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar"}
 GROUP_LIST_TEXTS = {"📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати", "📋 Guruhlar ro'yxati", "Guruhlar ro'yxati"}
@@ -160,7 +170,8 @@ async def _main_kb(message: Message | CallbackQuery):
     account = await get_user_account(message.from_user.id)
     linked = bool(account and account.session_string)
     subscribed = await has_active_subscription(message.from_user.id) if linked else False
-    return main_menu_kb(_is_admin(message), linked, subscribed)
+    pending = bool(await get_latest_pending_payment_for_user(message.from_user.id)) if linked and not subscribed else False
+    return main_menu_kb(_is_admin(message), linked, subscribed, pending)
 
 
 def _is_back_text(message: Message) -> bool:
@@ -221,6 +232,7 @@ async def _show_home(message: Message):
     account = await get_user_account(user.id)
     until = await subscription_until(user.id)
     subscribed = await has_active_subscription(user.id)
+    pending = await get_latest_pending_payment_for_user(user.id) if not subscribed else None
 
     if account and account.session_string:
         readiness, _ = await _readiness_text(user.id)
@@ -230,6 +242,13 @@ async def _show_home(message: Message):
                 f"💳 Обуна: {_format_until(until)}\n"
                 "Керакли бўлимни танланг.\n\n"
                 f"{readiness}"
+            )
+        elif pending:
+            text = (
+                f"✅ {user.first_name}, Telegram аккаунтингиз уланган.\n\n"
+                "⏳ Тўлов чекингиз админ тасдиғини кутяпти.\n"
+                f"Тўлов айди: {pending.id}\n\n"
+                "Янги чек юбориш ёки қайта обуна бўлиш шарт эмас."
             )
         else:
             text = (
@@ -255,6 +274,16 @@ async def _show_home(message: Message):
 
 
 async def _show_payment_request(message: Message, state: FSMContext):
+    pending = await get_latest_pending_payment_for_user(message.from_user.id)
+    if pending:
+        await state.clear()
+        await message.answer(
+            "⏳ Чекингиз қабул қилинган ва админ тасдиғини кутяпти.\n\n"
+            f"Тўлов айди: {pending.id}\n"
+            "Янги чек юбориш шарт эмас.",
+            reply_markup=await _main_kb(message),
+        )
+        return
     payment_config = await get_payment_config()
     await state.set_state(AdStates.waiting_payment_receipt)
     await message.answer(
@@ -880,11 +909,18 @@ async def receive_sub_days(message: Message, state: FSMContext, bot: Bot):
     user_id = int(data["sub_user_id"])
     until = await activate_subscription(user_id, int(days_text))
     await state.clear()
+    account = await get_user_account(user_id)
+    linked = bool(account and account.session_string)
     try:
         await bot.send_message(
             user_id,
-            f"✅ Админ обуна берди.\n📅 Гача: {_format_until(until)}",
-            reply_markup=main_menu_kb(False, True, True),
+            f"✅ Админ обуна берди.\n📅 Гача: {_format_until(until)}\n\n"
+            + (
+                "Энди хизматдан фойдаланишингиз мумкин."
+                if linked
+                else "👤 Давом этиш учун Telegram профилингизни қайта уланг."
+            ),
+            reply_markup=main_menu_kb(False, linked, True),
         )
     except Exception:
         pass
@@ -1032,13 +1068,23 @@ async def back_home(message: Message, state: FSMContext):
 async def profile(message: Message):
     account = await get_user_account(message.from_user.id)
     if account and account.session_string:
+        try:
+            await get_user_client(message.from_user.id)
+        except Exception as exc:
+            logger.info("[%s] stale Telegram profile removed: %s", message.from_user.id, exc)
+            await message.answer(
+                "⚠️ Олдинги Telegram сессияси ишламай қолган.\n"
+                "Обуна ва созламаларингиз сақланади; фақат профилни қайта уланг.",
+                reply_markup=profile_kb(),
+            )
+            return
         await message.answer(
             "✅ Telegram аккаунтингиз аллақачон уланган.\n\n"
             "Энди 2-қадам: «💳 Обуна бўлиш» тугмасини босинг.",
             reply_markup=await _main_kb(message),
         )
-    else:
-        await message.answer("👤 Профил улаш усулини танланг:", reply_markup=profile_kb())
+        return
+    await message.answer("👤 Профил улаш усулини танланг:", reply_markup=profile_kb())
 
 
 @router.message(F.text.in_(SUBSCRIBE_TEXTS))
@@ -1053,6 +1099,11 @@ async def subscribe_button(message: Message, state: FSMContext):
     if await has_active_subscription(message.from_user.id):
         await message.answer("✅ Обунангиз актив. Энди қолган бўлимлар очиқ.", reply_markup=await _main_kb(message))
         return
+    await _show_payment_request(message, state)
+
+
+@router.message(F.text.in_(PAYMENT_PENDING_TEXTS))
+async def pending_payment_button(message: Message, state: FSMContext):
     await _show_payment_request(message, state)
 
 
@@ -1170,7 +1221,7 @@ async def groups_add(message: Message):
     try:
         dialogs = await get_user_dialog_groups(message.from_user.id)
     except RuntimeError as exc:
-        await message.answer(f"❌ Хато: {exc}")
+        await message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
         return
 
     existing = {group.chat_id for group in await list_groups(_key(message))}
@@ -1189,7 +1240,7 @@ async def groups_add_all(message: Message):
     try:
         dialogs = await get_user_dialog_groups(message.from_user.id)
     except RuntimeError as exc:
-        await message.answer(f"❌ Хато: {exc}")
+        await message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
         return
     added_count = 0
     for dialog in dialogs:
@@ -1206,7 +1257,12 @@ async def groups_add_all(message: Message):
 @router.callback_query(F.data.startswith("addgroup:"))
 async def add_group_cb(callback: CallbackQuery):
     chat_id = int(callback.data.split(":")[1])
-    dialogs = await get_user_dialog_groups(callback.from_user.id)
+    try:
+        dialogs = await get_user_dialog_groups(callback.from_user.id)
+    except RuntimeError as exc:
+        await callback.message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
+        await callback.answer()
+        return
     title = next((dialog["title"] for dialog in dialogs if dialog["chat_id"] == chat_id), "Номаълум гуруҳ")
     added = await add_group(user_profile_key(callback.from_user.id), chat_id, title)
     await callback.answer("Қўшилди" if added else "Аллақачон бор")
@@ -1223,7 +1279,7 @@ async def add_all_groups_cb(callback: CallbackQuery):
     try:
         dialogs = await get_user_dialog_groups(callback.from_user.id)
     except RuntimeError as exc:
-        await callback.message.answer(f"❌ Хато: {exc}")
+        await callback.message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
         await callback.answer()
         return
     added_count = 0
@@ -1412,6 +1468,26 @@ async def receive_payment(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Чекни расм ёки файл қилиб юборинг.")
         return
 
+    await _accept_payment_receipt(message, state, bot, file_id, file_type)
+
+
+async def _accept_payment_receipt(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    file_id: str,
+    file_type: str,
+) -> None:
+    pending = await get_latest_pending_payment_for_user(message.from_user.id)
+    if pending:
+        await state.clear()
+        await message.answer(
+            "⏳ Олдинги чекингиз админ тасдиғини кутяпти. Янги чек сақланмади.\n\n"
+            f"Тўлов айди: {pending.id}",
+            reply_markup=await _main_kb(message),
+        )
+        return
+
     payment = await create_pending_payment(message.from_user.id, file_id, file_type)
     caption = (
         "💳 Янги тўлов чеки\n\n"
@@ -1419,13 +1495,38 @@ async def receive_payment(message: Message, state: FSMContext, bot: Bot):
         f"Айди: {message.from_user.id}\n"
         f"Тўлов айди: {payment.id}"
     )
-    if file_type == "photo":
-        await bot.send_photo(ADMIN_ID, file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
-    else:
-        await bot.send_document(ADMIN_ID, file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
+    delivered = True
+    try:
+        if file_type == "photo":
+            await bot.send_photo(ADMIN_ID, file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
+        else:
+            await bot.send_document(ADMIN_ID, file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
+    except Exception:
+        delivered = False
+        logger.exception("Payment #%s could not be delivered to admin %s", payment.id, ADMIN_ID)
 
     await state.clear()
-    await message.answer("✅ Чек админга юборилди. Тасдиқланишини кутинг.", reply_markup=await _main_kb(message))
+    if delivered:
+        text = "✅ Чек админга юборилди. Тасдиқланишини кутинг."
+    else:
+        text = (
+            "✅ Чек қабул қилинди ва сақланди.\n"
+            "Админ уни «💳 Тўловлар» бўлимида кўради. Тасдиқланишини кутинг."
+        )
+    await message.answer(text, reply_markup=await _main_kb(message))
+
+
+@router.message(F.photo | F.document)
+async def receive_payment_without_state(message: Message, state: FSMContext, bot: Bot):
+    """Accept a receipt even after an app restart has erased FSM memory."""
+    if _is_admin(message) or await has_active_subscription(message.from_user.id):
+        return
+    account = await get_user_account(message.from_user.id)
+    if not account:
+        await ensure_user(message.from_user.id, message.from_user.first_name)
+    file_id = message.photo[-1].file_id if message.photo else message.document.file_id
+    file_type = "photo" if message.photo else "document"
+    await _accept_payment_receipt(message, state, bot, file_id, file_type)
 
 
 @router.callback_query(F.data.startswith("payok:"))
@@ -1440,11 +1541,17 @@ async def approve_payment(callback: CallbackQuery):
         return
     until = await activate_subscription(payment.user_id, SUBSCRIPTION_DAYS)
     await set_payment_status(payment_id, "approved")
+    account = await get_user_account(payment.user_id)
+    linked = bool(account and account.session_string)
     await callback.bot.send_message(
         payment.user_id,
         f"✅ Тўлов тасдиқланди!\n🎉 Обуна ёқилди.\n📅 Гача: {_format_until(until)}\n\n"
-        "Энди «👥 Гуруҳлар», «💬 Хабар ёзиш» ва «🚀 Старт / Стоп» бўлимлари очиқ.",
-        reply_markup=main_menu_kb(False, True, True),
+        + (
+            "Энди «👥 Гуруҳлар», «💬 Хабар ёзиш» ва «🚀 Старт / Стоп» бўлимлари очиқ."
+            if linked
+            else "👤 Давом этиш учун Telegram профилингизни қайта уланг. Обунангиз сақланади."
+        ),
+        reply_markup=main_menu_kb(False, linked, True),
     )
     await callback.answer("Тасдиқланди")
 

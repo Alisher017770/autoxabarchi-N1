@@ -11,6 +11,7 @@ RESERVED_MESSAGE_TEXTS = {
     "🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel",
     "👤 Профил улаш", "Профил улаш", "👤 Profil ulash", "Profil ulash",
     "💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish",
+    "⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда",
     "📱 Телефон орқали улаш", "Телефон орқали улаш",
     "👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar",
     "📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати",
@@ -38,10 +39,17 @@ RESERVED_MESSAGE_TEXTS = {
 }
 
 
-def main_menu_kb(is_admin: bool = False, profile_linked: bool = False, subscribed: bool = False) -> ReplyKeyboardMarkup:
+def main_menu_kb(
+    is_admin: bool = False,
+    profile_linked: bool = False,
+    subscribed: bool = False,
+    payment_pending: bool = False,
+) -> ReplyKeyboardMarkup:
     keyboard = []
     if not profile_linked:
         keyboard.append([KeyboardButton(text="👤 Профил улаш")])
+    elif payment_pending:
+        keyboard.append([KeyboardButton(text="⏳ Тасдиқ кутилмоқда")])
     elif not subscribed:
         keyboard.append([KeyboardButton(text="💳 Обуна бўлиш")])
     else:
