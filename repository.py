@@ -4,7 +4,7 @@ from sqlalchemy import select, delete, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import BotConfig, BroadcastIssue, Group, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import BotConfig, BroadcastIssue, Group, GroupCooldown, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 
 
 async def get_settings(profile: str) -> Settings:
@@ -103,6 +103,52 @@ async def remove_group(profile: str, chat_id: int):
     async with async_session() as session:
         await session.execute(
             delete(Group).where(Group.profile == profile, Group.chat_id == chat_id)
+        )
+        await session.execute(
+            delete(GroupCooldown).where(
+                GroupCooldown.profile == profile,
+                GroupCooldown.chat_id == chat_id,
+            )
+        )
+        await session.commit()
+
+
+async def get_group_cooldowns(profile: str) -> dict[int, datetime]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(GroupCooldown).where(GroupCooldown.profile == profile)
+        )
+        return {row.chat_id: row.next_send_at for row in result.scalars().all()}
+
+
+async def set_group_cooldown(profile: str, chat_id: int, next_send_at: datetime) -> None:
+    async with async_session() as session:
+        result = await session.execute(
+            select(GroupCooldown).where(
+                GroupCooldown.profile == profile,
+                GroupCooldown.chat_id == chat_id,
+            )
+        )
+        cooldown = result.scalar_one_or_none()
+        if cooldown is None:
+            cooldown = GroupCooldown(
+                profile=profile,
+                chat_id=chat_id,
+                next_send_at=next_send_at,
+            )
+            session.add(cooldown)
+        else:
+            cooldown.next_send_at = next_send_at
+        await session.commit()
+
+
+async def clear_group_cooldown(profile: str, chat_id: int) -> None:
+    async with async_session() as session:
+        await session.execute(
+            delete(GroupCooldown).where(
+                GroupCooldown.profile == profile,
+                GroupCooldown.chat_id == chat_id,
+            )
         )
         await session.commit()
 

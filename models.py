@@ -16,6 +16,15 @@ class Group(Base):
     title: Mapped[str] = mapped_column(String(255))
 
 
+class GroupCooldown(Base):
+    """Next time a profile may send to a slow-mode group."""
+    __tablename__ = "group_cooldowns"
+
+    profile: Mapped[str] = mapped_column(String(20), primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    next_send_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class Settings(Base):
     """Har bir profil uchun bitta qator: xabar matni, interval, holat."""
     __tablename__ = "settings"
