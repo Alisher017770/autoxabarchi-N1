@@ -1,7 +1,7 @@
 import asyncio
 
 from telethon import TelegramClient
-from telethon.errors import PhoneCodeInvalidError, SessionPasswordNeededError
+from telethon.errors import AuthKeyDuplicatedError, PhoneCodeInvalidError, SessionPasswordNeededError
 from telethon.errors.common import AuthKeyNotFound
 from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
 from telethon.sessions import StringSession
@@ -100,6 +100,18 @@ async def get_user_client(user_id: int) -> TelegramClient:
     try:
         await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
         authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=CONNECT_TIMEOUT_SECONDS)
+    except AuthKeyDuplicatedError as exc:
+        _clients.pop(user_id, None)
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        await clear_user_session(user_id)
+        raise RuntimeError(
+            "Бу спам чеклови эмас. Telegram сессияни икки хил IP манзилда "
+            "ишлатилгани учун бекор қилган. «Профил улаш» орқали қайта уланг "
+            "ва ушбу профилни бошқа серверда ишлатманг."
+        ) from exc
     except asyncio.TimeoutError as exc:
         await client.disconnect()
         raise RuntimeError("Telegram аккаунтига уланиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
