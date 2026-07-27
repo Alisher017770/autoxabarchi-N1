@@ -3,14 +3,18 @@ from datetime import datetime, timedelta
 import logging
 import time
 
+from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from telethon.errors import (
     ChatWriteForbiddenError,
     FloodWaitError,
+    PeerFloodError,
     SlowModeWaitError,
     UserBannedInChannelError,
+    UserRestrictedError,
 )
 
-from config import MAX_RUN_MINUTES, REST_DURATION_MINUTES, REST_EVERY_MINUTES
+from config import ADMIN_ID, MAX_RUN_MINUTES, REST_DURATION_MINUTES, REST_EVERY_MINUTES
 from repository import (
     clear_broadcast_issue,
     clear_group_cooldown,
@@ -27,10 +31,68 @@ from telethon_clients import get_user_client
 logger = logging.getLogger(__name__)
 
 _tasks: dict[str, asyncio.Task] = {}
+_notification_bot: Bot | None = None
 
 REST_EVERY_SECONDS = REST_EVERY_MINUTES * 60
 REST_DURATION_SECONDS = REST_DURATION_MINUTES * 60
 MAX_RUN_SECONDS = MAX_RUN_MINUTES * 60
+
+SPAM_ERROR_MARKERS = (
+    "PEER_FLOOD",
+    "USER_RESTRICTED",
+    "FROZEN_METHOD_INVALID",
+)
+
+
+def configure_broadcaster_bot(bot: Bot) -> None:
+    global _notification_bot
+    _notification_bot = bot
+
+
+def _is_account_spam_error(exc: Exception) -> bool:
+    if isinstance(exc, (PeerFloodError, UserRestrictedError)):
+        return True
+    error_text = f"{getattr(exc, 'message', '')} {exc}".upper()
+    return any(marker in error_text for marker in SPAM_ERROR_MARKERS)
+
+
+async def _stop_spam_restricted_profile(profile: str, exc: Exception) -> None:
+    details = f"Telegram spam cheklovi: {type(exc).__name__}: {exc}"
+    await set_broadcast_issue(profile, "spam_restricted", details)
+    await set_running(profile, False)
+    logger.error("[%s] spam cheklovi aniqlandi, tarqatish to'xtatildi: %s", profile, exc)
+
+    if _notification_bot is None:
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🛡 Spam holatini tekshirish", url="https://t.me/SpamBot")]
+        ]
+    )
+    try:
+        await _notification_bot.send_message(
+            int(profile),
+            "⛔️ Telegram profilingizda spam cheklovi aniqlandi.\n\n"
+            "Bekorga qayta-qayta urinmasligi uchun xabar tarqatish avtomatik to‘xtatildi. "
+            "Quyidagi tugma orqali @SpamBot holatini tekshiring. Cheklov olib tashlangach "
+            "«🚀 Старт / Стоп» tugmasini qayta bosishingiz mumkin.",
+            reply_markup=keyboard,
+        )
+    except Exception:
+        logger.exception("[%s] spam cheklovi haqida foydalanuvchiga xabar yuborilmadi", profile)
+
+    if ADMIN_ID and ADMIN_ID != int(profile):
+        try:
+            await _notification_bot.send_message(
+                ADMIN_ID,
+                "⚠️ Spam cheklovidagi profil avtomatik to‘xtatildi.\n"
+                f"Foydalanuvchi ID: {profile}\n"
+                f"Xato: {type(exc).__name__}: {exc}\n\n"
+                "Profil «⚠️ Муаммоли профиллар» bo‘limiga qo‘shildi.",
+            )
+        except Exception:
+            logger.exception("[%s] spam cheklovi haqida adminga xabar yuborilmadi", profile)
 
 
 async def _limited_sleep(profile: str, seconds: float, started_at: float, next_rest_at: float) -> tuple[float, bool]:
@@ -105,6 +167,10 @@ async def _broadcast_loop(profile: str):
                         await client.send_message(group.chat_id, text, parse_mode="html")
                         if next_send_at:
                             await clear_group_cooldown(profile, group.chat_id)
+                    except (PeerFloodError, UserRestrictedError) as exc:
+                        await _stop_spam_restricted_profile(profile, exc)
+                        can_continue = False
+                        break
                     except FloodWaitError as exc:
                         logger.warning("[%s] FloodWait: %ss kutilmoqda", profile, exc.seconds)
                         await asyncio.sleep(exc.seconds)
@@ -125,6 +191,10 @@ async def _broadcast_loop(profile: str):
                         )
                         logger.warning("[%s] %s guruhiga yozib bo'lmaydi", profile, group.title)
                     except Exception as exc:
+                        if _is_account_spam_error(exc):
+                            await _stop_spam_restricted_profile(profile, exc)
+                            can_continue = False
+                            break
                         await set_broadcast_issue(profile, "send_error", f"«{group.title}»: {exc}")
                         logger.exception("[%s] xato (%s)", profile, group.title)
                     next_rest_at, can_continue = await _limited_sleep(profile, 2, started_at, next_rest_at)
