@@ -9,6 +9,8 @@ from config import BOT_BRAND, BOT_TOKEN, validate_config
 from broadcaster import resume_running_profiles
 from db import init_db
 from handlers import router as main_router
+from keyboards import RESERVED_MESSAGE_TEXTS
+from repository import clear_reserved_message_texts
 from subscription_monitor import subscription_monitor
 from telethon_clients import disconnect_all
 
@@ -19,6 +21,9 @@ logger = logging.getLogger(__name__)
 async def main():
     validate_config()
     await init_db()
+    cleared_messages = await clear_reserved_message_texts(RESERVED_MESSAGE_TEXTS)
+    if cleared_messages:
+        logger.warning("%s ta menyu matni xabar sozlamasidan tozalandi", cleared_messages)
 
     bot = Bot(token=BOT_TOKEN)
     try:

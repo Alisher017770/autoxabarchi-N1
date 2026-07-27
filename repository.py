@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, delete, func, or_
+from sqlalchemy import select, delete, func, or_, update
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
@@ -28,6 +28,17 @@ async def set_message_text(profile: str, text: str):
             session.add(settings)
         settings.message_text = text
         await session.commit()
+
+
+async def clear_reserved_message_texts(reserved_texts: set[str]) -> int:
+    async with async_session() as session:
+        result = await session.execute(
+            update(Settings)
+            .where(Settings.message_text.in_(reserved_texts))
+            .values(message_text=None, is_running=False)
+        )
+        await session.commit()
+        return int(result.rowcount or 0)
 
 
 async def set_interval(profile: str, minutes: int):
