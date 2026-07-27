@@ -219,12 +219,21 @@ async def _broadcast_loop(profile: str):
         logger.info("[%s] reklama tsikli to'xtadi", profile)
 
 
-async def start_broadcast(profile: str):
+async def start_broadcast(profile: str) -> tuple[bool, str | None]:
     task = _tasks.get(profile)
     if task and not task.done():
-        return
+        return True, None
+    try:
+        await get_user_client(int(profile))
+    except Exception as exc:
+        details = f"Telegram профилига уланмади: {exc}"
+        await set_broadcast_issue(profile, "profile", details)
+        await set_running(profile, False)
+        logger.warning("[%s] старт текширувидан ўтмади: %s", profile, exc)
+        return False, str(exc)
     await set_running(profile, True)
     _tasks[profile] = asyncio.create_task(_broadcast_loop(profile))
+    return True, None
 
 
 async def stop_broadcast(profile: str):

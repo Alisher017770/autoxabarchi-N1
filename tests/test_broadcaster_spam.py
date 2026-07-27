@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 import broadcaster
+import telethon_clients
+from telethon.errors import AuthKeyDuplicatedError
 
 
 class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
@@ -31,6 +33,34 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.send_message.await_count, 2)
         self.assertEqual(bot.send_message.await_args_list[0].args[0], 123)
         self.assertEqual(bot.send_message.await_args_list[1].args[0], 999)
+
+    async def test_start_does_not_claim_success_when_profile_connection_fails(self):
+        connection_error = RuntimeError("Профилни қайта уланг.")
+        with (
+            patch.object(broadcaster, "get_user_client", new=AsyncMock(side_effect=connection_error)),
+            patch.object(broadcaster, "set_broadcast_issue", new=AsyncMock()) as set_issue,
+            patch.object(broadcaster, "set_running", new=AsyncMock()) as set_running,
+        ):
+            started, error = await broadcaster.start_broadcast("321")
+
+        self.assertFalse(started)
+        self.assertEqual(error, "Профилни қайта уланг.")
+        set_issue.assert_awaited_once()
+        set_running.assert_awaited_once_with("321", False)
+
+    async def test_duplicated_session_is_cleared_and_explained(self):
+        client = AsyncMock()
+        client.connect.side_effect = AuthKeyDuplicatedError(request=None)
+        with (
+            patch.object(telethon_clients, "get_user_session", new=AsyncMock(return_value="session")),
+            patch.object(telethon_clients, "clear_user_session", new=AsyncMock()) as clear_session,
+            patch.object(telethon_clients, "_new_client", return_value=client),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "спам чеклови эмас"):
+                await telethon_clients.get_user_client(456)
+
+        clear_session.assert_awaited_once_with(456)
+        client.disconnect.assert_awaited_once()
 
 
 if __name__ == "__main__":

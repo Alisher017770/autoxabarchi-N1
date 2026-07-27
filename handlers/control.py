@@ -26,7 +26,10 @@ async def start_cb(callback: CallbackQuery):
         await callback.answer("Avval Guruhlar bo'limidan kamida bitta guruh qo'shing.", show_alert=True)
         return
 
-    await start_broadcast(profile)
+    started, error = await start_broadcast(profile)
+    if not started:
+        await callback.answer(error or "Профил ишга тушмади.", show_alert=True)
+        return
     await callback.answer("Ishga tushirildi")
     settings = await get_settings(profile)
     await callback.message.edit_reply_markup(reply_markup=main_menu_kb(profile, settings.is_running))

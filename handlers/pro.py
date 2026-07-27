@@ -1531,9 +1531,16 @@ async def start_or_stop(message: Message, state: FSMContext):
         await message.answer(text, reply_markup=groups_kb())
         return
 
+    started, error = await start_broadcast(profile)
+    if not started:
+        await message.answer(
+            "⛔️ Хабар юбориш ишга тушмади.\n\n" + (error or "Telegram профилига уланиб бўлмади."),
+            reply_markup=await _main_kb(message),
+        )
+        return
+
     text, _ = await _readiness_text(message.from_user.id)
     await message.answer(text, reply_markup=await _main_kb(message))
-    await start_broadcast(profile)
     await message.answer(
         "🚀 Ишга туширилди.\n\n"
         f"⏱ Вақт: ҳар {_interval_label(settings_row.interval_minutes)}\n"
