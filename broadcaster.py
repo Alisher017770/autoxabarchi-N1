@@ -2,7 +2,12 @@ import asyncio
 import logging
 import time
 
-from telethon.errors import FloodWaitError, ChatWriteForbiddenError, UserBannedInChannelError
+from telethon.errors import (
+    ChatWriteForbiddenError,
+    FloodWaitError,
+    SlowModeWaitError,
+    UserBannedInChannelError,
+)
 
 from config import MAX_RUN_MINUTES, REST_DURATION_MINUTES, REST_EVERY_MINUTES
 from repository import (
@@ -86,6 +91,13 @@ async def _broadcast_loop(profile: str):
                     except FloodWaitError as exc:
                         logger.warning("[%s] FloodWait: %ss kutilmoqda", profile, exc.seconds)
                         await asyncio.sleep(exc.seconds)
+                    except SlowModeWaitError as exc:
+                        await set_broadcast_issue(
+                            profile,
+                            "slow_mode",
+                            f"«{group.title}» гуруҳида секин режим: {exc.seconds} сония кутиш керак",
+                        )
+                        logger.warning("[%s] %s guruhida sekin rejim: %ss", profile, group.title, exc.seconds)
                     except (ChatWriteForbiddenError, UserBannedInChannelError):
                         await set_broadcast_issue(
                             profile,
