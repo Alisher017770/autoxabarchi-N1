@@ -15,6 +15,7 @@ from config import API_ID, API_HASH
 from repository import clear_user_session, get_user_session, save_user_session
 
 CONNECT_TIMEOUT_SECONDS = 25
+GROUP_SCAN_TIMEOUT_SECONDS = 90
 logger = logging.getLogger(__name__)
 
 
@@ -298,16 +299,22 @@ async def get_user_client(user_id: int) -> TelegramClient:
     return client
 
 
-async def get_user_dialog_groups(user_id: int, limit: int = 50) -> list[dict]:
+async def get_user_dialog_groups(user_id: int) -> list[dict]:
     client = await get_user_client(user_id)
     groups = []
+    scanned_dialogs = 0
     try:
-        async with asyncio.timeout(CONNECT_TIMEOUT_SECONDS):
-            async for dialog in client.iter_dialogs(limit=limit):
+        async with asyncio.timeout(GROUP_SCAN_TIMEOUT_SECONDS):
+            # limit=None is important here: a numeric limit applies to all
+            # dialogs, not only groups. Users with many private chats/channels
+            # would otherwise see only the groups found in the first page.
+            async for dialog in client.iter_dialogs(limit=None, ignore_migrated=True):
+                scanned_dialogs += 1
                 if dialog.is_group:
                     groups.append({"chat_id": dialog.id, "title": dialog.name})
     except TimeoutError as exc:
         raise RuntimeError("Гуруҳлар рўйхатини олиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
+    logger.info("[%s] Telegram dialogs scanned: %s; groups found: %s", user_id, scanned_dialogs, len(groups))
     return groups
 
 
