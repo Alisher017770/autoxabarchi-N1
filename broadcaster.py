@@ -14,7 +14,14 @@ from telethon.errors import (
     UserRestrictedError,
 )
 
-from config import ADMIN_ID, MAX_RUN_MINUTES, REST_DURATION_MINUTES, REST_EVERY_MINUTES
+from config import (
+    ADMIN_ID,
+    BROADCAST_CONCURRENCY,
+    BROADCAST_RESUME_DELAY_SECONDS,
+    MAX_RUN_MINUTES,
+    REST_DURATION_MINUTES,
+    REST_EVERY_MINUTES,
+)
 from repository import (
     clear_broadcast_issue,
     clear_group_cooldown,
@@ -29,12 +36,13 @@ from repository import (
     set_group_cooldown,
     set_running,
 )
-from telethon_clients import get_user_client
+from telethon_clients import get_user_client, release_user_client
 
 logger = logging.getLogger(__name__)
 
 _tasks: dict[str, asyncio.Task] = {}
 _notification_bot: Bot | None = None
+_broadcast_slots = asyncio.Semaphore(BROADCAST_CONCURRENCY)
 
 REST_EVERY_SECONDS = REST_EVERY_MINUTES * 60
 REST_DURATION_SECONDS = REST_DURATION_MINUTES * 60
@@ -169,6 +177,104 @@ async def _limited_sleep(profile: str, seconds: float, started_at: float, next_r
         await asyncio.sleep(max(1, min(60, end_at - now, next_rest_at - now, (started_at + MAX_RUN_SECONDS) - now)))
 
 
+async def _send_cycle(
+    profile: str,
+    user_id: int,
+    text: str,
+    groups,
+    cooldowns: dict[int, datetime],
+    started_at: float,
+    next_rest_at: float,
+) -> tuple[float, bool, int, int, int, int]:
+    """Send one profile cycle while bounding global Telegram connections."""
+    attempted_count = 0
+    sent_count = 0
+    write_forbidden_count = 0
+    retry_after_seconds = 0
+    can_continue = True
+    client = None
+
+    async with _broadcast_slots:
+        try:
+            client = await get_user_client(user_id)
+        except Exception as exc:
+            await set_broadcast_issue(profile, "profile", f"Telegram профилига уланмади: {exc}")
+            await set_running(profile, False)
+            logger.exception("[%s] Telegram профилига уланмади", profile)
+            return next_rest_at, False, 0, 0, 0, 0
+
+        try:
+            for group in groups:
+                next_send_at = cooldowns.get(group.chat_id)
+                if next_send_at and next_send_at > datetime.utcnow():
+                    remaining = max(1, int((next_send_at - datetime.utcnow()).total_seconds()))
+                    logger.info(
+                        "[%s] %s guruhida slow mode, yana %ss dan keyin uriniladi",
+                        profile,
+                        group.title,
+                        remaining,
+                    )
+                    continue
+                try:
+                    attempted_count += 1
+                    await client.send_message(group.chat_id, text, parse_mode="html")
+                    sent_count += 1
+                    await mark_group_success(profile, group.chat_id)
+                    if next_send_at:
+                        await clear_group_cooldown(profile, group.chat_id)
+                except (PeerFloodError, UserRestrictedError) as exc:
+                    await _stop_spam_restricted_profile(profile, exc)
+                    can_continue = False
+                    break
+                except FloodWaitError as exc:
+                    retry_after_seconds = max(retry_after_seconds, int(exc.seconds))
+                    await set_broadcast_issue(
+                        profile,
+                        "flood_wait",
+                        f"Telegram {exc.seconds} сония кутишни сўради",
+                    )
+                    logger.warning("[%s] FloodWait: %ss; profil navbatdan chiqarildi", profile, exc.seconds)
+                    break
+                except SlowModeWaitError as exc:
+                    next_send_at = datetime.utcnow() + timedelta(seconds=exc.seconds)
+                    await set_group_cooldown(profile, group.chat_id, next_send_at)
+                    await set_broadcast_issue(
+                        profile,
+                        "slow_mode",
+                        f"«{group.title}» гуруҳида секин режим: {exc.seconds} сония кутиш керак",
+                    )
+                    logger.warning("[%s] %s guruhida sekin rejim: %ss", profile, group.title, exc.seconds)
+                except (ChatWriteForbiddenError, UserBannedInChannelError):
+                    write_forbidden_count += 1
+                    await set_broadcast_issue(
+                        profile,
+                        "write_forbidden",
+                        f"«{group.title}» гуруҳига ёзиш ҳуқуқи йўқ",
+                    )
+                    logger.warning("[%s] %s guruhiga yozib bo'lmaydi", profile, group.title)
+                except Exception as exc:
+                    if _is_account_spam_error(exc):
+                        await _stop_spam_restricted_profile(profile, exc)
+                        can_continue = False
+                        break
+                    await set_broadcast_issue(profile, "send_error", f"«{group.title}»: {exc}")
+                    logger.exception("[%s] xato (%s)", profile, group.title)
+                next_rest_at, can_continue = await _limited_sleep(profile, 2, started_at, next_rest_at)
+                if not can_continue:
+                    break
+        finally:
+            await release_user_client(user_id)
+
+    return (
+        next_rest_at,
+        can_continue,
+        attempted_count,
+        sent_count,
+        write_forbidden_count,
+        retry_after_seconds,
+    )
+
+
 async def _broadcast_loop(profile: str):
     logger.info("[%s] reklama tsikli boshlandi", profile)
     user_id = int(profile)
@@ -194,71 +300,26 @@ async def _broadcast_loop(profile: str):
                 await set_running(profile, False)
                 break
 
+            retry_after_seconds = 0
             if groups:
                 await clear_broadcast_issue(profile)
                 cooldowns = await get_group_cooldowns(profile)
-                attempted_count = 0
-                sent_count = 0
-                write_forbidden_count = 0
-                try:
-                    client = await get_user_client(user_id)
-                except Exception as exc:
-                    await set_broadcast_issue(profile, "profile", f"Telegram профилига уланмади: {exc}")
-                    await set_running(profile, False)
-                    logger.exception("[%s] Telegram профилига уланмади", profile)
-                    break
-                for group in groups:
-                    next_send_at = cooldowns.get(group.chat_id)
-                    if next_send_at and next_send_at > datetime.utcnow():
-                        remaining = max(1, int((next_send_at - datetime.utcnow()).total_seconds()))
-                        logger.info(
-                            "[%s] %s guruhida slow mode, yana %ss dan keyin uriniladi",
-                            profile,
-                            group.title,
-                            remaining,
-                        )
-                        continue
-                    try:
-                        attempted_count += 1
-                        await client.send_message(group.chat_id, text, parse_mode="html")
-                        sent_count += 1
-                        await mark_group_success(profile, group.chat_id)
-                        if next_send_at:
-                            await clear_group_cooldown(profile, group.chat_id)
-                    except (PeerFloodError, UserRestrictedError) as exc:
-                        await _stop_spam_restricted_profile(profile, exc)
-                        can_continue = False
-                        break
-                    except FloodWaitError as exc:
-                        logger.warning("[%s] FloodWait: %ss kutilmoqda", profile, exc.seconds)
-                        await asyncio.sleep(exc.seconds)
-                    except SlowModeWaitError as exc:
-                        next_send_at = datetime.utcnow() + timedelta(seconds=exc.seconds)
-                        await set_group_cooldown(profile, group.chat_id, next_send_at)
-                        await set_broadcast_issue(
-                            profile,
-                            "slow_mode",
-                            f"«{group.title}» гуруҳида секин режим: {exc.seconds} сония кутиш керак",
-                        )
-                        logger.warning("[%s] %s guruhida sekin rejim: %ss", profile, group.title, exc.seconds)
-                    except (ChatWriteForbiddenError, UserBannedInChannelError):
-                        write_forbidden_count += 1
-                        await set_broadcast_issue(
-                            profile,
-                            "write_forbidden",
-                            f"«{group.title}» гуруҳига ёзиш ҳуқуқи йўқ",
-                        )
-                        logger.warning("[%s] %s guruhiga yozib bo'lmaydi", profile, group.title)
-                    except Exception as exc:
-                        if _is_account_spam_error(exc):
-                            await _stop_spam_restricted_profile(profile, exc)
-                            can_continue = False
-                            break
-                        await set_broadcast_issue(profile, "send_error", f"«{group.title}»: {exc}")
-                        logger.exception("[%s] xato (%s)", profile, group.title)
-                    next_rest_at, can_continue = await _limited_sleep(profile, 2, started_at, next_rest_at)
-                    if not can_continue:
-                        break
+                (
+                    next_rest_at,
+                    can_continue,
+                    attempted_count,
+                    sent_count,
+                    write_forbidden_count,
+                    retry_after_seconds,
+                ) = await _send_cycle(
+                    profile,
+                    user_id,
+                    text,
+                    groups,
+                    cooldowns,
+                    started_at,
+                    next_rest_at,
+                )
 
                 if can_continue and _all_attempts_write_forbidden(
                     attempted_count,
@@ -273,7 +334,7 @@ async def _broadcast_loop(profile: str):
                 break
             next_rest_at, can_continue = await _limited_sleep(
                 profile,
-                settings.interval_minutes * 60,
+                max(settings.interval_minutes * 60, retry_after_seconds),
                 started_at,
                 next_rest_at,
             )
@@ -308,6 +369,8 @@ async def start_broadcast(profile: str, *, bypass_spam_lock: bool = False) -> tu
         await set_running(profile, False)
         logger.warning("[%s] старт текширувидан ўтмади: %s", profile, exc)
         return False, str(exc)
+    else:
+        await release_user_client(int(profile))
     await set_running(profile, True)
     _tasks[profile] = asyncio.create_task(_broadcast_loop(profile))
     return True, None
@@ -330,6 +393,7 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
     if not groups:
         return False, "Текшириш учун сақланган гуруҳлар йўқ."
 
+    client = None
     try:
         client = await get_user_client(user_id)
     except Exception as exc:
@@ -349,6 +413,8 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
                 datetime.utcnow() + timedelta(minutes=settings.interval_minutes),
             )
             await clear_broadcast_issue(profile)
+            await release_user_client(user_id)
+            client = None
             started, error = await start_broadcast(profile, bypass_spam_lock=True)
             if not started:
                 return False, error or "Профил ишга тушмади."
@@ -359,10 +425,14 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
             )
         except (PeerFloodError, UserRestrictedError) as exc:
             await _stop_spam_restricted_profile(profile, exc)
+            await release_user_client(user_id)
+            client = None
             return False, "Telegram ҳали ҳам spam чекловини қайтарди. Кейинроқ қайта текширинг."
         except (ChatWriteForbiddenError, UserBannedInChannelError):
             forbidden += 1
         except FloodWaitError as exc:
+            await release_user_client(user_id)
+            client = None
             return False, f"Telegram {exc.seconds} сония кутишни сўради. Кейинроқ қайта текширинг."
         except SlowModeWaitError as exc:
             await set_group_cooldown(
@@ -373,10 +443,14 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
         except Exception as exc:
             if _is_account_spam_error(exc):
                 await _stop_spam_restricted_profile(profile, exc)
+                await release_user_client(user_id)
+                client = None
                 return False, "Telegram ҳали ҳам spam чекловини қайтарди. Кейинроқ қайта текширинг."
             logger.warning("[%s] spam қайта текширувида %s: %s", profile, group.title, exc)
         await asyncio.sleep(2)
 
+    if client is not None:
+        await release_user_client(user_id)
     await set_running(profile, False)
     if attempted >= SPAM_RECHECK_GROUP_LIMIT and forbidden == attempted:
         await set_broadcast_issue(
@@ -409,6 +483,27 @@ async def stop_broadcast(profile: str):
 async def resume_running_profiles():
     from repository import get_all_running_profiles
 
-    for profile in await get_all_running_profiles():
+    profiles = await get_all_running_profiles()
+    if profiles and BROADCAST_RESUME_DELAY_SECONDS:
+        logger.info(
+            "%s ta faol profil deploydan keyin %s soniyada qayta ishga tushadi",
+            len(profiles),
+            BROADCAST_RESUME_DELAY_SECONDS,
+        )
+        await asyncio.sleep(BROADCAST_RESUME_DELAY_SECONDS)
+
+    for profile in profiles:
         if profile.isdigit():
-            _tasks[profile] = asyncio.create_task(_broadcast_loop(profile))
+            task = _tasks.get(profile)
+            if not task or task.done():
+                _tasks[profile] = asyncio.create_task(_broadcast_loop(profile))
+
+
+async def shutdown_broadcaster() -> None:
+    """Cancel local tasks without changing persisted running flags."""
+    tasks = [task for task in _tasks.values() if not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    _tasks.clear()

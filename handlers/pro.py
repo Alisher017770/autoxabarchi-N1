@@ -88,6 +88,7 @@ from telethon_clients import (
     finish_qr_login,
     get_user_client,
     get_user_dialog_groups,
+    release_user_client,
     login_code_next_delivery_text,
     resend_login_code,
     send_login_code,
@@ -1092,6 +1093,8 @@ async def profile(message: Message):
                 reply_markup=profile_kb(),
             )
             return
+        else:
+            await release_user_client(message.from_user.id)
         await message.answer(
             "✅ Telegram аккаунтингиз аллақачон уланган.\n\n"
             "Энди 2-қадам: «💳 Обуна бўлиш» тугмасини босинг.",
