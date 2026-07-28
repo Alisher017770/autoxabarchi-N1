@@ -88,6 +88,7 @@ from telethon_clients import (
     finish_qr_login,
     get_user_client,
     get_user_dialog_groups,
+    login_code_next_delivery_text,
     resend_login_code,
     send_login_code,
     start_qr_login,
@@ -1321,15 +1322,15 @@ async def receive_phone(message: Message, state: FSMContext):
         await _show_home(message)
         return
     phone = message.contact.phone_number if message.contact else (message.text or "").strip()
-    if not phone.startswith("+"):
-        phone = "+" + re.sub(r"\D", "", phone)
-    if len(re.sub(r"\D", "", phone)) < 10:
+    phone_digits = re.sub(r"\D", "", phone)
+    phone = f"+{phone_digits}"
+    if len(phone_digits) < 10:
         await message.answer("Телефон рақамни +998... форматда юборинг.")
         return
 
     await message.answer("📩 Код юборилмоқда...")
     try:
-        delivery_text = await send_login_code(message.from_user.id, phone)
+        code_info = await send_login_code(message.from_user.id, phone)
     except Exception as exc:
         await message.answer(f"❌ Код юборилмади: {exc}", reply_markup=profile_kb())
         await state.clear()
@@ -1337,29 +1338,40 @@ async def receive_phone(message: Message, state: FSMContext):
 
     await state.set_state(AdStates.waiting_login_code)
     await message.answer(
-        "✅ Код юборилди.\n\n"
-        f"{delivery_text}\n\n"
+        "✅ Telegram код сўровини қабул қилди.\n\n"
+        f"{code_info.delivery_text}\n"
+        f"{login_code_next_delivery_text(code_info)}\n\n"
         "🔎 Telegram иловасида «Telegram» деб қидириб, кўк белгили расмий хизмат чатини ҳам текширинг.\n"
         "Кодни нуқта билан ёзсангиз ҳам бўлади. Масалан: 54.568",
-        reply_markup=login_code_kb(),
+        reply_markup=login_code_kb(can_resend=bool(code_info.next_type)),
     )
 
 
-@router.message(AdStates.waiting_login_code, F.text.in_({"🔄 Кодни қайта сўраш", "Кодни қайта сўраш"}))
+@router.message(
+    AdStates.waiting_login_code,
+    F.text.in_({
+        "📩 Кодни кейинги усулда сўраш",
+        "Кодни кейинги усулда сўраш",
+        "🔄 Кодни қайта сўраш",
+        "Кодни қайта сўраш",
+    }),
+)
 async def resend_code(message: Message):
-    await message.answer("📩 Код қайта сўралмоқда...")
+    await message.answer("📩 Код кейинги усулда сўралмоқда...")
     try:
-        delivery_text = await resend_login_code(message.from_user.id)
+        code_info = await resend_login_code(message.from_user.id)
     except Exception as exc:
         await message.answer(
             f"❌ Код қайта юборилмади: {exc}\n\n"
-            "Кўп марта босманг. 2 дақиқа кутиб, яна бир марта уриниб кўринг.",
+            "Кўп марта босманг. Кўрсатилган вақт тугагач яна бир марта босинг.",
             reply_markup=login_code_kb(),
         )
         return
     await message.answer(
-        f"✅ Код қайта сўралди.\n\n{delivery_text}",
-        reply_markup=login_code_kb(),
+        "✅ Telegram кейинги код сўровини қабул қилди.\n\n"
+        f"{code_info.delivery_text}\n"
+        f"{login_code_next_delivery_text(code_info)}",
+        reply_markup=login_code_kb(can_resend=bool(code_info.next_type)),
     )
 
 
