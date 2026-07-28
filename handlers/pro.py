@@ -29,6 +29,7 @@ from keyboards import (
     dialog_pick_kb,
     expiring_user_actions_kb,
     expiring_users_kb,
+    finance_kb,
     group_delete_kb,
     groups_kb,
     interval_kb,
@@ -54,6 +55,7 @@ from repository import (
     count_users_by_subscription,
     ensure_user,
     get_admin_stats,
+    get_financial_summary,
     get_admin_user_card,
     get_broadcast_issue,
     get_payment_config,
@@ -77,6 +79,7 @@ from repository import (
     set_interval,
     set_message_text,
     set_payment_status,
+    parse_money_amount,
     subscription_until,
     user_profile_key,
 )
@@ -121,6 +124,8 @@ RUNNING_USERS_TEXTS = {"🚀 Ҳозир ишлаётганлар", "Ҳозир �
 EXPIRING_USERS_TEXTS = {"⏳ Обунаси тугаётганлар", "Обунаси тугаётганлар"}
 EXPIRING_ONE_DAY_TEXTS = {"1️⃣ 1 кун қолганлар", "1 кун қолганлар"}
 EXPIRING_THREE_DAYS_TEXTS = {"3️⃣ 3 кун қолганлар", "3 кун қолганлар"}
+FINANCE_TEXTS = {"💰 Ҳисоб-китоб", "Ҳисоб-китоб"}
+SERVER_COST_TEXTS = {"🧾 Сервер харажати", "Сервер харажати"}
 
 BACK_TEXTS = {"⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga"}
 ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel"}
@@ -227,6 +232,10 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
             await admin_expiring_one_day(message)
         elif text in EXPIRING_THREE_DAYS_TEXTS:
             await admin_expiring_three_days(message)
+        elif text in FINANCE_TEXTS:
+            await admin_finance(message)
+        elif text in SERVER_COST_TEXTS:
+            await ask_admin_server_cost(message, state)
         else:
             await message.answer(
                 "⚠️ Меню тугмаси хабар сифатида юборилмади. Керакли бўлимни қайта танланг.",
@@ -437,6 +446,63 @@ async def admin_stats(message: Message):
         f"✅ Тасдиқланган тўловлар: {stats['approved_payments']}",
         reply_markup=admin_menu_kb(),
     )
+
+
+def _format_money(value: int) -> str:
+    return f"{value:,}".replace(",", " ") + " сўм"
+
+
+@router.message(F.text.in_(FINANCE_TEXTS))
+async def admin_finance(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    report = await get_financial_summary()
+    unknown_note = ""
+    if report["approved_unknown"]:
+        unknown_note = (
+            f"\n⚠️ Эски нархи сақланмаган тўловлар: {report['approved_unknown']} та "
+            "(умумий тушумга қўшилмади)"
+        )
+    await message.answer(
+        "💰 Ҳисоб-китоб\n\n"
+        f"👤 Жами фойдаланувчи: {report['users']} та\n"
+        f"🎟 Актив обуначи: {report['active_subs']} та\n"
+        f"🏷 Ҳозирги нарх: {_format_money(report['current_price'])}\n"
+        f"📈 Актив обуналар қиймати: {_format_money(report['projected_revenue'])}\n\n"
+        f"✅ Шу ой тушган пул: {_format_money(report['month_revenue'])}\n"
+        f"💵 Аниқ қайд этилган жами тушум: {_format_money(report['total_revenue'])}\n"
+        f"🧾 Ойлик сервер харажати: {_format_money(report['server_cost'])}\n"
+        f"🟢 Шу ой соф натижа: {_format_money(report['month_profit'])}\n"
+        f"📋 Аниқ ҳисобланган тўловлар: {report['approved_exact']} та"
+        f"{unknown_note}",
+        reply_markup=finance_kb(),
+    )
+
+
+@router.message(F.text.in_(SERVER_COST_TEXTS))
+async def ask_admin_server_cost(message: Message, state: FSMContext):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await state.set_state(AdStates.waiting_admin_server_cost)
+    await message.answer("Railway ва бошқа серверларнинг бир ойлик жами харажатини сўмда ёзинг. Масалан: 150 000")
+
+
+@router.message(AdStates.waiting_admin_server_cost)
+async def save_admin_server_cost(message: Message, state: FSMContext):
+    if await _cancel_admin_state(message, state):
+        return
+    if not _is_admin(message):
+        await state.clear()
+        return
+    amount = parse_money_amount(message.text)
+    if amount <= 0:
+        await message.answer("Харажатни рақамда ёзинг. Масалан: 150 000")
+        return
+    await set_bot_config("server_cost", str(amount))
+    await state.clear()
+    await message.answer("✅ Ойлик сервер харажати сақланди.", reply_markup=finance_kb())
 
 
 @router.message(F.text.in_({"💳 Тўловлар", "Тўловлар", "💳 To'lovlar", "To'lovlar"}))
@@ -1807,7 +1873,8 @@ async def approve_payment(callback: CallbackQuery):
         await callback.answer("Бу чек аллақачон кўрилган.", show_alert=True)
         return
     until = await activate_subscription(payment.user_id, SUBSCRIPTION_DAYS)
-    await set_payment_status(payment_id, "approved")
+    payment_config = await get_payment_config()
+    await set_payment_status(payment_id, "approved", parse_money_amount(payment_config["price"]))
     account = await get_user_account(payment.user_id)
     linked = bool(account and account.session_string)
     await callback.bot.send_message(

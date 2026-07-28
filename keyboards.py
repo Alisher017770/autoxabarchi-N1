@@ -28,6 +28,7 @@ RESERVED_MESSAGE_TEXTS = {
     "🚀 Старт / Стоп", "Старт / Стоп", "🚀 Start / Stop", "Start / Stop",
     "⚙️ Қўлда танлаш", "Қўлда танлаш",
     "📊 Статистика", "Статистика",
+    "💰 Ҳисоб-китоб", "Ҳисоб-китоб", "🧾 Сервер харажати", "Сервер харажати",
     "👥 Фойдаланувчилар", "Фойдаланувчилар", "👥 Userlar", "Userlar",
     "💳 Тўловлар", "Тўловлар",
     "🎟 Обуна бериш", "Обуна бериш",
@@ -198,10 +199,21 @@ def admin_menu_kb() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="👥 Фойдаланувчилар")],
             [KeyboardButton(text="💳 Тўловлар")],
+            [KeyboardButton(text="💰 Ҳисоб-китоб")],
             [KeyboardButton(text="🎟 Обуна бериш"), KeyboardButton(text="🚫 Обунани ўчириш")],
             [KeyboardButton(text="📢 Эълон юбориш")],
             [KeyboardButton(text="⚙️ Тўлов созламалари")],
             [KeyboardButton(text="⬅️ Орқага")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def finance_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🧾 Сервер харажати")],
+            [KeyboardButton(text="🛠 Админ панел")],
         ],
         resize_keyboard=True,
     )
