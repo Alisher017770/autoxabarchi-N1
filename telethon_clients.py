@@ -28,6 +28,8 @@ class LoginCodeInfo:
     retry_after: int
 
 _clients: dict[int, TelegramClient] = {}
+_client_locks: dict[int, asyncio.Lock] = {}
+_client_refs: dict[int, int] = {}
 _login_clients: dict[int, TelegramClient] = {}
 _login_phones: dict[int, str] = {}
 _qr_login_tasks: dict[int, asyncio.Task] = {}
@@ -198,7 +200,12 @@ def _normalized_user_phone(phone: str | None) -> str:
 
 async def _save_authorized_login(user_id: int, client: TelegramClient, phone: str):
     await save_user_session(user_id, phone, client.session.save())
-    _clients[user_id] = client
+    old_client = _clients.pop(user_id, None)
+    _client_refs.pop(user_id, None)
+    if old_client and old_client is not client and old_client.is_connected():
+        await old_client.disconnect()
+    if client.is_connected():
+        await client.disconnect()
     _login_clients.pop(user_id, None)
     _login_phones.pop(user_id, None)
     _qr_login_tasks.pop(user_id, None)
@@ -258,45 +265,64 @@ async def cancel_login(user_id: int):
 
 
 async def get_user_client(user_id: int) -> TelegramClient:
-    client = _clients.get(user_id)
-    if client and client.is_connected():
+    lock = _client_locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        client = _clients.get(user_id)
+        if client and client.is_connected():
+            _client_refs[user_id] = _client_refs.get(user_id, 0) + 1
+            return client
+
+        session_str = await get_user_session(user_id)
+        if not session_str:
+            raise RuntimeError("Ҳозирча профил уланмаган. Аввал «Профил улаш» бўлимидан уланг.")
+
+        client = _new_client(session_str)
+        try:
+            await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
+            authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=CONNECT_TIMEOUT_SECONDS)
+        except AuthKeyDuplicatedError as exc:
+            _clients.pop(user_id, None)
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            await clear_user_session(user_id)
+            raise RuntimeError(
+                "Бу спам чеклови эмас. Telegram сессияни икки хил IP манзилда "
+                "ишлатилгани учун бекор қилган. «Профил улаш» орқали қайта уланг "
+                "ва ушбу профилни бошқа серверда ишлатманг."
+            ) from exc
+        except asyncio.TimeoutError as exc:
+            await client.disconnect()
+            raise RuntimeError("Telegram аккаунтига уланиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
+        except AuthKeyNotFound as exc:
+            await client.disconnect()
+            await clear_user_session(user_id)
+            raise RuntimeError("Сессия эскирган ёки нотўғри. Профилни қайта уланг.") from exc
+
+        if not authorized:
+            await client.disconnect()
+            await clear_user_session(user_id)
+            raise RuntimeError("Профил авторизациядан ўтмаган. Профилни қайта уланг.")
+
+        _clients[user_id] = client
+        _client_refs[user_id] = _client_refs.get(user_id, 0) + 1
         return client
 
-    session_str = await get_user_session(user_id)
-    if not session_str:
-        raise RuntimeError("Ҳозирча профил уланмаган. Аввал «Профил улаш» бўлимидан уланг.")
 
-    client = _new_client(session_str)
-    try:
-        await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
-        authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=CONNECT_TIMEOUT_SECONDS)
-    except AuthKeyDuplicatedError as exc:
-        _clients.pop(user_id, None)
-        try:
+async def release_user_client(user_id: int) -> None:
+    """Release one borrower and disconnect the profile when it becomes idle."""
+    lock = _client_locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        refs = _client_refs.get(user_id, 0)
+        if refs > 1:
+            _client_refs[user_id] = refs - 1
+            return
+
+        _client_refs.pop(user_id, None)
+        client = _clients.pop(user_id, None)
+        if client and client.is_connected():
             await client.disconnect()
-        except Exception:
-            pass
-        await clear_user_session(user_id)
-        raise RuntimeError(
-            "Бу спам чеклови эмас. Telegram сессияни икки хил IP манзилда "
-            "ишлатилгани учун бекор қилган. «Профил улаш» орқали қайта уланг "
-            "ва ушбу профилни бошқа серверда ишлатманг."
-        ) from exc
-    except asyncio.TimeoutError as exc:
-        await client.disconnect()
-        raise RuntimeError("Telegram аккаунтига уланиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
-    except AuthKeyNotFound as exc:
-        await client.disconnect()
-        await clear_user_session(user_id)
-        raise RuntimeError("Сессия эскирган ёки нотўғри. Профилни қайта уланг.") from exc
-
-    if not authorized:
-        await client.disconnect()
-        await clear_user_session(user_id)
-        raise RuntimeError("Профил авторизациядан ўтмаган. Профилни қайта уланг.")
-
-    _clients[user_id] = client
-    return client
 
 
 async def get_user_dialog_groups(user_id: int) -> list[dict]:
@@ -314,6 +340,8 @@ async def get_user_dialog_groups(user_id: int) -> list[dict]:
                     groups.append({"chat_id": dialog.id, "title": dialog.name})
     except TimeoutError as exc:
         raise RuntimeError("Гуруҳлар рўйхатини олиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
+    finally:
+        await release_user_client(user_id)
     logger.info("[%s] Telegram dialogs scanned: %s; groups found: %s", user_id, scanned_dialogs, len(groups))
     return groups
 
@@ -326,3 +354,6 @@ async def disconnect_all():
     for client in list(_clients.values()) + list(_login_clients.values()):
         if client.is_connected():
             await client.disconnect()
+    _clients.clear()
+    _client_refs.clear()
+    _login_clients.clear()

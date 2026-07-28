@@ -6,7 +6,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 from config import BOT_BRAND, BOT_TOKEN, validate_config
-from broadcaster import configure_broadcaster_bot, resume_running_profiles
+from broadcaster import configure_broadcaster_bot, resume_running_profiles, shutdown_broadcaster
 from db import init_db
 from handlers import router as main_router
 from keyboards import RESERVED_MESSAGE_TEXTS
@@ -50,14 +50,17 @@ async def main():
 
     dp.include_router(main_router)
 
-    await resume_running_profiles()
+    resume_task = asyncio.create_task(resume_running_profiles())
     monitor_task = asyncio.create_task(subscription_monitor(bot))
 
     try:
         logger.info("Бот ишга тушди")
         await dp.start_polling(bot)
     finally:
+        resume_task.cancel()
         monitor_task.cancel()
+        await asyncio.gather(resume_task, monitor_task, return_exceptions=True)
+        await shutdown_broadcaster()
         await disconnect_all()
 
 

@@ -39,6 +39,8 @@ INTERVAL_OPTIONS = [2, 3, 5, 7, 10, 15, 30, 360]  # daqiqa (360 = 6 soat)
 REST_EVERY_MINUTES = int(os.getenv("REST_EVERY_MINUTES", "360"))
 REST_DURATION_MINUTES = int(os.getenv("REST_DURATION_MINUTES", "20"))
 MAX_RUN_MINUTES = int(os.getenv("MAX_RUN_MINUTES", "720"))
+BROADCAST_CONCURRENCY = max(1, int(os.getenv("BROADCAST_CONCURRENCY", "30")))
+BROADCAST_RESUME_DELAY_SECONDS = max(0, int(os.getenv("BROADCAST_RESUME_DELAY_SECONDS", "30")))
 SUBSCRIPTION_DAYS = int(os.getenv("SUBSCRIPTION_DAYS", "30"))
 BOT_BRAND = os.getenv("BOT_BRAND", "Авто хабарчи N1 бот")
 if BOT_BRAND == "Auto xabarchi N1 bot":
