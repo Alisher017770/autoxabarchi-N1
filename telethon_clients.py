@@ -10,9 +10,10 @@ from telethon.errors import AuthKeyDuplicatedError, PhoneCodeInvalidError, Sessi
 from telethon.errors.common import AuthKeyNotFound
 from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
 from telethon.sessions import StringSession
+from telethon.tl.types import InputPeerChannel, InputPeerChat
 
 from config import API_ID, API_HASH
-from repository import clear_user_session, get_user_session, save_user_session
+from repository import clear_user_session, get_user_session, save_group_peers, save_user_session
 
 CONNECT_TIMEOUT_SECONDS = 25
 GROUP_SCAN_TIMEOUT_SECONDS = 90
@@ -337,7 +338,24 @@ async def get_user_dialog_groups(user_id: int) -> list[dict]:
             async for dialog in client.iter_dialogs(limit=None, ignore_migrated=True):
                 scanned_dialogs += 1
                 if dialog.is_group:
-                    groups.append({"chat_id": dialog.id, "title": dialog.name})
+                    peer = getattr(dialog, "input_entity", None)
+                    peer_type = None
+                    access_hash = None
+                    if isinstance(peer, InputPeerChannel):
+                        peer_type = "channel"
+                        access_hash = peer.access_hash
+                    elif isinstance(peer, InputPeerChat):
+                        peer_type = "chat"
+                    groups.append({
+                        "chat_id": dialog.id,
+                        "title": dialog.name,
+                        "peer_type": peer_type,
+                        "access_hash": access_hash,
+                    })
+            await save_group_peers(
+                str(user_id),
+                [group for group in groups if group["peer_type"]],
+            )
     except TimeoutError as exc:
         raise RuntimeError("Гуруҳлар рўйхатини олиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
     finally:

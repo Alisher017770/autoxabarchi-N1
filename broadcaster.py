@@ -17,6 +17,8 @@ from telethon.errors import (
     UserBannedInChannelError,
     UserRestrictedError,
 )
+from telethon import utils as telethon_utils
+from telethon.tl.types import InputPeerChannel, InputPeerChat
 
 from config import (
     ADMIN_ID,
@@ -35,6 +37,7 @@ from repository import (
     complete_broadcast_job,
     get_broadcast_issue,
     get_group_cooldowns,
+    get_group_peer_targets,
     get_group_success_times,
     get_settings,
     has_active_subscription,
@@ -44,6 +47,7 @@ from repository import (
     prepare_running_broadcast_jobs,
     release_broadcast_job,
     renew_broadcast_job,
+    save_group_peers,
     schedule_broadcast_start,
     set_broadcast_issue,
     set_group_cooldown,
@@ -58,6 +62,7 @@ _worker_task: asyncio.Task | None = None
 _worker_owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:10]}"
 _notification_bot: Bot | None = None
 _broadcast_slots = asyncio.Semaphore(BROADCAST_CONCURRENCY)
+_peer_hydration_slots = asyncio.Semaphore(3)
 
 REST_EVERY_SECONDS = REST_EVERY_MINUTES * 60
 REST_DURATION_SECONDS = REST_DURATION_MINUTES * 60
@@ -71,6 +76,11 @@ SPAM_ERROR_MARKERS = (
     "USER_RESTRICTED",
     "FROZEN_METHOD_INVALID",
 )
+WRITE_FORBIDDEN_MARKERS = (
+    "CHAT_SEND_PLAIN_FORBIDDEN",
+    "CHAT_WRITE_FORBIDDEN",
+    "USER_BANNED_IN_CHANNEL",
+)
 
 
 def configure_broadcaster_bot(bot: Bot) -> None:
@@ -83,6 +93,63 @@ def _is_account_spam_error(exc: Exception) -> bool:
         return True
     error_text = f"{getattr(exc, 'message', '')} {exc}".upper()
     return any(marker in error_text for marker in SPAM_ERROR_MARKERS)
+
+
+def _is_write_forbidden_error(exc: Exception) -> bool:
+    if isinstance(exc, (ChatWriteForbiddenError, UserBannedInChannelError)):
+        return True
+    error_text = f"{getattr(exc, 'message', '')} {exc}".upper()
+    return any(marker in error_text for marker in WRITE_FORBIDDEN_MARKERS)
+
+
+def _stored_peer(chat_id: int, peer_data: tuple[str, int | None] | None):
+    if peer_data is None:
+        return chat_id
+    peer_type, access_hash = peer_data
+    real_id, _peer_class = telethon_utils.resolve_id(chat_id)
+    if peer_type == "channel" and access_hash is not None:
+        return InputPeerChannel(real_id, access_hash)
+    if peer_type == "chat":
+        return InputPeerChat(real_id)
+    return chat_id
+
+
+async def _hydrate_missing_group_peers(client, profile: str, groups, peer_targets):
+    """Fetch missing access hashes once, then persist them for every worker."""
+    missing = {group.chat_id for group in groups if group.chat_id not in peer_targets}
+    if not missing:
+        return
+    discovered = []
+    async with _peer_hydration_slots:
+        async for dialog in client.iter_dialogs(limit=None, ignore_migrated=True):
+            if dialog.id not in missing:
+                continue
+            peer = dialog.input_entity
+            if isinstance(peer, InputPeerChannel):
+                data = {
+                    "chat_id": dialog.id,
+                    "peer_type": "channel",
+                    "access_hash": peer.access_hash,
+                }
+            elif isinstance(peer, InputPeerChat):
+                data = {
+                    "chat_id": dialog.id,
+                    "peer_type": "chat",
+                    "access_hash": None,
+                }
+            else:
+                continue
+            discovered.append(data)
+            peer_targets[dialog.id] = (data["peer_type"], data["access_hash"])
+            missing.discard(dialog.id)
+            if not missing:
+                break
+    # A saved group no longer present in dialogs is stale. Remember that we
+    # checked it so every future cycle does not rescan the whole dialog list.
+    for chat_id in missing:
+        discovered.append({"chat_id": chat_id, "peer_type": "unknown", "access_hash": None})
+        peer_targets[chat_id] = ("unknown", None)
+    await save_group_peers(profile, discovered)
 
 
 def _all_attempts_write_forbidden(attempted: int, sent: int, write_forbidden: int) -> bool:
@@ -204,6 +271,7 @@ async def _send_cycle(
     cycle_started_at: datetime | None = None,
     success_times: dict[int, datetime] | None = None,
     lease_guard: Callable[[], Awaitable[bool]] | None = None,
+    peer_targets: dict[int, tuple[str, int | None]] | None = None,
 ) -> tuple[float, bool, int, int, int, int]:
     """Send one profile cycle while bounding global Telegram connections."""
     attempted_count = 0
@@ -223,6 +291,11 @@ async def _send_cycle(
             return next_rest_at, False, 0, 0, 0, 0
 
         try:
+            peer_targets = peer_targets if peer_targets is not None else {}
+            try:
+                await _hydrate_missing_group_peers(client, profile, groups, peer_targets)
+            except Exception as exc:
+                logger.warning("[%s] guruh peer ma'lumotlarini yangilab bo'lmadi: %s", profile, exc)
             for group in groups:
                 if (
                     cycle_started_at is not None
@@ -248,7 +321,8 @@ async def _send_cycle(
                     continue
                 try:
                     attempted_count += 1
-                    await client.send_message(group.chat_id, text, parse_mode="html")
+                    target = _stored_peer(group.chat_id, peer_targets.get(group.chat_id))
+                    await client.send_message(target, text, parse_mode="html")
                     sent_count += 1
                     await mark_group_success(profile, group.chat_id)
                     if success_times is not None:
@@ -290,6 +364,20 @@ async def _send_cycle(
                         await _stop_spam_restricted_profile(profile, exc)
                         can_continue = False
                         break
+                    if _is_write_forbidden_error(exc):
+                        write_forbidden_count += 1
+                        await set_broadcast_issue(
+                            profile,
+                            "write_forbidden",
+                            f"«{group.title}» guruhiga yozish huquqi yo'q",
+                        )
+                        logger.warning("[%s] %s guruhiga yozib bo'lmaydi", profile, group.title)
+                        next_rest_at, can_continue = await _limited_sleep(
+                            profile, 2, started_at, next_rest_at
+                        )
+                        if not can_continue:
+                            break
+                        continue
                     await set_broadcast_issue(profile, "send_error", f"«{group.title}»: {exc}")
                     logger.exception("[%s] xato (%s)", profile, group.title)
                 next_rest_at, can_continue = await _limited_sleep(profile, 2, started_at, next_rest_at)
@@ -372,6 +460,7 @@ async def _process_broadcast_job(job) -> None:
             await clear_broadcast_issue(profile)
             cooldowns = await get_group_cooldowns(profile)
             success_times = await get_group_success_times(profile)
+            peer_targets = await get_group_peer_targets(profile)
             (
                 _next_rest_at,
                 can_continue,
@@ -390,6 +479,7 @@ async def _process_broadcast_job(job) -> None:
                 cycle_started_at=job.cycle_started_at,
                 success_times=success_times,
                 lease_guard=lease_guard,
+                peer_targets=peer_targets,
             )
             if can_continue and _all_attempts_write_forbidden(
                 attempted_count,

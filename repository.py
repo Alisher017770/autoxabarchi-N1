@@ -4,7 +4,7 @@ from sqlalchemy import select, delete, exists, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 
 
 async def get_settings(profile: str) -> Settings:
@@ -265,6 +265,31 @@ async def get_group_success_times(profile: str) -> dict[int, datetime]:
         return {row.chat_id: row.last_success_at for row in result.scalars().all()}
 
 
+async def get_group_peer_targets(profile: str) -> dict[int, tuple[str, int | None]]:
+    async with async_session() as session:
+        result = await session.execute(select(GroupPeer).where(GroupPeer.profile == profile))
+        return {
+            row.chat_id: (row.peer_type, row.access_hash)
+            for row in result.scalars().all()
+        }
+
+
+async def save_group_peers(profile: str, peers: list[dict]) -> None:
+    """Upsert peer access hashes discovered from Telegram dialogs."""
+    if not peers:
+        return
+    async with async_session() as session:
+        for data in peers:
+            chat_id = int(data["chat_id"])
+            row = await session.get(GroupPeer, (profile, chat_id))
+            if row is None:
+                row = GroupPeer(profile=profile, chat_id=chat_id)
+                session.add(row)
+            row.peer_type = str(data["peer_type"])
+            row.access_hash = data.get("access_hash")
+        await session.commit()
+
+
 async def stop_all_running_profiles():
     async with async_session() as session:
         result = await session.execute(select(Settings).where(Settings.is_running.is_(True)))
@@ -310,6 +335,12 @@ async def remove_group(profile: str, chat_id: int):
             delete(GroupSuccess).where(
                 GroupSuccess.profile == profile,
                 GroupSuccess.chat_id == chat_id,
+            )
+        )
+        await session.execute(
+            delete(GroupPeer).where(
+                GroupPeer.profile == profile,
+                GroupPeer.chat_id == chat_id,
             )
         )
         await session.commit()
