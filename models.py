@@ -112,6 +112,8 @@ class PendingPayment(Base):
     file_id: Mapped[str] = mapped_column(Text)
     file_type: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

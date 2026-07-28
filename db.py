@@ -19,6 +19,11 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         if engine.dialect.name == "postgresql":
+            # create_all does not add columns to an existing table. These
+            # nullable columns preserve all old receipts and enable exact
+            # accounting for newly approved payments.
+            await conn.execute(text("ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS amount INTEGER"))
+            await conn.execute(text("ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP"))
             # Rows may have been imported with explicit IDs. PostgreSQL sequences
             # do not advance in that case, so the next INSERT can reuse an
             # existing primary key. Keep each generated-ID sequence in sync.

@@ -7,6 +7,12 @@ from db import async_session
 from models import BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 
 
+def parse_money_amount(value: str | None) -> int:
+    """Convert display values such as '25 000 сўм' to integer UZS."""
+    digits = "".join(character for character in (value or "") if character.isdigit())
+    return int(digits) if digits else 0
+
+
 async def get_settings(profile: str) -> Settings:
     async with async_session() as session:
         result = await session.execute(select(Settings).where(Settings.profile == profile))
@@ -539,7 +545,9 @@ async def revoke_subscription(user_id: int) -> datetime | None:
 
 async def create_pending_payment(user_id: int, file_id: str, file_type: str) -> PendingPayment:
     async with async_session() as session:
-        payment = PendingPayment(user_id=user_id, file_id=file_id, file_type=file_type)
+        configured_price = await session.scalar(select(BotConfig.value).where(BotConfig.key == "price"))
+        amount = parse_money_amount(configured_price or SUBSCRIPTION_PRICE) or None
+        payment = PendingPayment(user_id=user_id, file_id=file_id, file_type=file_type, amount=amount)
         session.add(payment)
         await session.commit()
         await session.refresh(payment)
@@ -563,12 +571,15 @@ async def get_latest_pending_payment_for_user(user_id: int) -> PendingPayment | 
         return result.scalar_one_or_none()
 
 
-async def set_payment_status(payment_id: int, status: str):
+async def set_payment_status(payment_id: int, status: str, amount: int | None = None):
     async with async_session() as session:
         result = await session.execute(select(PendingPayment).where(PendingPayment.id == payment_id))
         payment = result.scalar_one_or_none()
         if payment:
             payment.status = status
+            if status == "approved":
+                payment.amount = payment.amount or amount
+                payment.approved_at = payment.approved_at or datetime.utcnow()
             await session.commit()
 
 
@@ -843,6 +854,56 @@ async def get_admin_stats() -> dict:
             "active_subs": active_subs or 0,
             "pending_payments": pending_payments or 0,
             "approved_payments": approved_payments or 0,
+        }
+
+
+async def get_financial_summary() -> dict:
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1)
+    async with async_session() as session:
+        users = await session.scalar(select(func.count()).select_from(UserAccount)) or 0
+        active_subs = await session.scalar(
+            select(func.count()).select_from(Subscription).where(Subscription.active_until > now)
+        ) or 0
+        approved_exact = await session.scalar(
+            select(func.count()).select_from(PendingPayment).where(
+                PendingPayment.status == "approved", PendingPayment.amount.is_not(None)
+            )
+        ) or 0
+        approved_unknown = await session.scalar(
+            select(func.count()).select_from(PendingPayment).where(
+                PendingPayment.status == "approved", PendingPayment.amount.is_(None)
+            )
+        ) or 0
+        total_revenue = await session.scalar(
+            select(func.coalesce(func.sum(PendingPayment.amount), 0)).where(
+                PendingPayment.status == "approved", PendingPayment.amount.is_not(None)
+            )
+        ) or 0
+        month_revenue = await session.scalar(
+            select(func.coalesce(func.sum(PendingPayment.amount), 0)).where(
+                PendingPayment.status == "approved",
+                PendingPayment.amount.is_not(None),
+                PendingPayment.approved_at >= month_start,
+            )
+        ) or 0
+        config_rows = await session.execute(
+            select(BotConfig).where(BotConfig.key.in_({"price", "server_cost"}))
+        )
+        config = {item.key: item.value for item in config_rows.scalars().all()}
+        current_price = parse_money_amount(config.get("price") or SUBSCRIPTION_PRICE)
+        server_cost = parse_money_amount(config.get("server_cost"))
+        return {
+            "users": int(users),
+            "active_subs": int(active_subs),
+            "current_price": current_price,
+            "projected_revenue": int(active_subs) * current_price,
+            "month_revenue": int(month_revenue),
+            "total_revenue": int(total_revenue),
+            "server_cost": server_cost,
+            "month_profit": int(month_revenue) - server_cost,
+            "approved_exact": int(approved_exact),
+            "approved_unknown": int(approved_unknown),
         }
 
 
