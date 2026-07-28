@@ -83,9 +83,11 @@ def profile_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def qr_login_kb() -> InlineKeyboardMarkup:
+def qr_login_kb(login_url: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    kb.button(text="📲 Шу телефонда улаш", url=login_url)
     kb.button(text="❌ Бекор қилиш", callback_data="cancel_qr_login")
+    kb.adjust(1)
     return kb.as_markup()
 
 
