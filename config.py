@@ -41,6 +41,9 @@ REST_DURATION_MINUTES = int(os.getenv("REST_DURATION_MINUTES", "20"))
 MAX_RUN_MINUTES = int(os.getenv("MAX_RUN_MINUTES", "720"))
 BROADCAST_CONCURRENCY = max(1, int(os.getenv("BROADCAST_CONCURRENCY", "30")))
 BROADCAST_RESUME_DELAY_SECONDS = max(0, int(os.getenv("BROADCAST_RESUME_DELAY_SECONDS", "30")))
+BROADCAST_WORKER_ENABLED = os.getenv("BROADCAST_WORKER_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+BROADCAST_WORKER_POLL_SECONDS = max(0.2, float(os.getenv("BROADCAST_WORKER_POLL_SECONDS", "1")))
+BROADCAST_LEASE_SECONDS = max(60, int(os.getenv("BROADCAST_LEASE_SECONDS", "180")))
 SUBSCRIPTION_DAYS = int(os.getenv("SUBSCRIPTION_DAYS", "30"))
 BOT_BRAND = os.getenv("BOT_BRAND", "Авто хабарчи N1 бот")
 if BOT_BRAND == "Auto xabarchi N1 bot":

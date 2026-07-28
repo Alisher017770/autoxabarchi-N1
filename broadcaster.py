@@ -1,7 +1,11 @@
 import asyncio
 from datetime import datetime, timedelta
 import logging
+import os
+import socket
 import time
+import uuid
+from collections.abc import Awaitable, Callable
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,7 +21,9 @@ from telethon.errors import (
 from config import (
     ADMIN_ID,
     BROADCAST_CONCURRENCY,
+    BROADCAST_LEASE_SECONDS,
     BROADCAST_RESUME_DELAY_SECONDS,
+    BROADCAST_WORKER_POLL_SECONDS,
     MAX_RUN_MINUTES,
     REST_DURATION_MINUTES,
     REST_EVERY_MINUTES,
@@ -25,13 +31,20 @@ from config import (
 from repository import (
     clear_broadcast_issue,
     clear_group_cooldown,
+    claim_due_broadcast_jobs,
+    complete_broadcast_job,
     get_broadcast_issue,
     get_group_cooldowns,
+    get_group_success_times,
     get_settings,
     has_active_subscription,
     list_groups,
     list_spam_recheck_groups,
     mark_group_success,
+    prepare_running_broadcast_jobs,
+    release_broadcast_job,
+    renew_broadcast_job,
+    schedule_broadcast_start,
     set_broadcast_issue,
     set_group_cooldown,
     set_running,
@@ -41,6 +54,8 @@ from telethon_clients import get_user_client, release_user_client
 logger = logging.getLogger(__name__)
 
 _tasks: dict[str, asyncio.Task] = {}
+_worker_task: asyncio.Task | None = None
+_worker_owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:10]}"
 _notification_bot: Bot | None = None
 _broadcast_slots = asyncio.Semaphore(BROADCAST_CONCURRENCY)
 
@@ -185,6 +200,10 @@ async def _send_cycle(
     cooldowns: dict[int, datetime],
     started_at: float,
     next_rest_at: float,
+    *,
+    cycle_started_at: datetime | None = None,
+    success_times: dict[int, datetime] | None = None,
+    lease_guard: Callable[[], Awaitable[bool]] | None = None,
 ) -> tuple[float, bool, int, int, int, int]:
     """Send one profile cycle while bounding global Telegram connections."""
     attempted_count = 0
@@ -205,6 +224,18 @@ async def _send_cycle(
 
         try:
             for group in groups:
+                if (
+                    cycle_started_at is not None
+                    and success_times is not None
+                    and success_times.get(group.chat_id) is not None
+                    and success_times[group.chat_id] >= cycle_started_at
+                ):
+                    logger.info("[%s] %s guruhiga bu aylana yuborilgan, takrorlanmaydi", profile, group.title)
+                    continue
+                if lease_guard is not None and not await lease_guard():
+                    logger.info("[%s] worker ijarasi tugadi yoki foydalanuvchi to'xtatdi", profile)
+                    can_continue = False
+                    break
                 next_send_at = cooldowns.get(group.chat_id)
                 if next_send_at and next_send_at > datetime.utcnow():
                     remaining = max(1, int((next_send_at - datetime.utcnow()).total_seconds()))
@@ -220,6 +251,8 @@ async def _send_cycle(
                     await client.send_message(group.chat_id, text, parse_mode="html")
                     sent_count += 1
                     await mark_group_success(profile, group.chat_id)
+                    if success_times is not None:
+                        success_times[group.chat_id] = datetime.utcnow()
                     if next_send_at:
                         await clear_group_cooldown(profile, group.chat_id)
                 except (PeerFloodError, UserRestrictedError) as exc:
@@ -275,84 +308,144 @@ async def _send_cycle(
     )
 
 
-async def _broadcast_loop(profile: str):
-    logger.info("[%s] reklama tsikli boshlandi", profile)
+async def _process_broadcast_job(job) -> None:
+    """Execute exactly one due cycle owned by this worker."""
+    profile = job.profile
+    generation = job.generation
     user_id = int(profile)
-    started_at = time.monotonic()
-    next_rest_at = started_at + REST_EVERY_SECONDS
+    guard_checked_at = 0.0
+
+    async def lease_guard() -> bool:
+        nonlocal guard_checked_at
+        now = time.monotonic()
+        if now - guard_checked_at < 5:
+            return True
+        guard_checked_at = now
+        return await renew_broadcast_job(
+            profile,
+            _worker_owner,
+            generation,
+            BROADCAST_LEASE_SECONDS,
+        )
+
     try:
-        while True:
-            next_rest_at, can_continue = await _limited_sleep(profile, 0, started_at, next_rest_at)
-            if not can_continue:
-                break
-
-            settings = await get_settings(profile)
-            if not settings.is_running:
-                break
-            if not await has_active_subscription(user_id):
-                await set_running(profile, False)
-                break
-
-            text = settings.message_text
-            groups = await list_groups(profile)
-
-            if not text:
-                await set_running(profile, False)
-                break
-
-            retry_after_seconds = 0
-            if groups:
-                await clear_broadcast_issue(profile)
-                cooldowns = await get_group_cooldowns(profile)
-                (
-                    next_rest_at,
-                    can_continue,
-                    attempted_count,
-                    sent_count,
-                    write_forbidden_count,
-                    retry_after_seconds,
-                ) = await _send_cycle(
-                    profile,
-                    user_id,
-                    text,
-                    groups,
-                    cooldowns,
-                    started_at,
-                    next_rest_at,
-                )
-
-                if can_continue and _all_attempts_write_forbidden(
-                    attempted_count,
-                    sent_count,
-                    write_forbidden_count,
-                ):
-                    await _stop_all_groups_forbidden(profile, attempted_count)
-                    break
-
-            settings = await get_settings(profile)
-            if not settings.is_running:
-                break
-            next_rest_at, can_continue = await _limited_sleep(
+        now = datetime.utcnow()
+        if now >= job.run_started_at + timedelta(seconds=MAX_RUN_SECONDS):
+            await set_running(profile, False)
+            await complete_broadcast_job(
                 profile,
-                max(settings.interval_minutes * 60, retry_after_seconds),
-                started_at,
-                next_rest_at,
+                _worker_owner,
+                generation,
+                next_run_at=now,
             )
-            if not can_continue:
-                break
+            logger.info("[%s] %s daqiqa limit tugadi", profile, MAX_RUN_MINUTES)
+            return
+
+        if now >= job.next_rest_at:
+            await complete_broadcast_job(
+                profile,
+                _worker_owner,
+                generation,
+                next_run_at=now + timedelta(seconds=REST_DURATION_SECONDS),
+                next_rest_at=now + timedelta(seconds=REST_EVERY_SECONDS),
+            )
+            logger.info("[%s] %s daqiqa dam olish navbatiga o'tdi", profile, REST_DURATION_MINUTES)
+            return
+
+        settings = await get_settings(profile)
+        if not settings.is_running:
+            await release_broadcast_job(profile, _worker_owner, generation)
+            return
+        if not await has_active_subscription(user_id):
+            await set_running(profile, False)
+            await release_broadcast_job(profile, _worker_owner, generation)
+            return
+        if not settings.message_text:
+            await set_running(profile, False)
+            await release_broadcast_job(profile, _worker_owner, generation)
+            return
+
+        groups = await list_groups(profile)
+        retry_after_seconds = 0
+        can_continue = True
+        if groups:
+            await clear_broadcast_issue(profile)
+            cooldowns = await get_group_cooldowns(profile)
+            success_times = await get_group_success_times(profile)
+            (
+                _next_rest_at,
+                can_continue,
+                attempted_count,
+                sent_count,
+                write_forbidden_count,
+                retry_after_seconds,
+            ) = await _send_cycle(
+                profile,
+                user_id,
+                settings.message_text,
+                groups,
+                cooldowns,
+                time.monotonic(),
+                time.monotonic() + MAX_RUN_SECONDS,
+                cycle_started_at=job.cycle_started_at,
+                success_times=success_times,
+                lease_guard=lease_guard,
+            )
+            if can_continue and _all_attempts_write_forbidden(
+                attempted_count,
+                sent_count,
+                write_forbidden_count,
+            ):
+                await _stop_all_groups_forbidden(profile, attempted_count)
+                can_continue = False
+
+        settings = await get_settings(profile)
+        if not can_continue or not settings.is_running:
+            await release_broadcast_job(profile, _worker_owner, generation)
+            return
+
+        await complete_broadcast_job(
+            profile,
+            _worker_owner,
+            generation,
+            next_run_at=datetime.utcnow() + timedelta(
+                seconds=max(settings.interval_minutes * 60, retry_after_seconds)
+            ),
+        )
     except asyncio.CancelledError:
-        logger.info("[%s] tsikl bekor qilindi", profile)
+        await release_broadcast_job(profile, _worker_owner, generation)
         raise
+    except Exception:
+        logger.exception("[%s] worker aylanasida kutilmagan xato", profile)
+        await release_broadcast_job(profile, _worker_owner, generation, retry_seconds=30)
     finally:
         if _tasks.get(profile) is asyncio.current_task():
             _tasks.pop(profile, None)
-        logger.info("[%s] reklama tsikli to'xtadi", profile)
+
+
+async def _worker_loop() -> None:
+    created = await prepare_running_broadcast_jobs(
+        delay_seconds=BROADCAST_RESUME_DELAY_SECONDS,
+        rest_every_minutes=REST_EVERY_MINUTES,
+    )
+    if created:
+        logger.info("%s ta avvalgi faol profil worker navbatiga qo'shildi", created)
+    logger.info("Yashirin broadcast worker ishga tushdi: %s", _worker_owner)
+    while True:
+        free_slots = max(0, BROADCAST_CONCURRENCY - len(_tasks))
+        if free_slots:
+            jobs = await claim_due_broadcast_jobs(
+                _worker_owner,
+                limit=free_slots,
+                lease_seconds=BROADCAST_LEASE_SECONDS,
+            )
+            for job in jobs:
+                if job.profile not in _tasks:
+                    _tasks[job.profile] = asyncio.create_task(_process_broadcast_job(job))
+        await asyncio.sleep(BROADCAST_WORKER_POLL_SECONDS)
 
 
 async def start_broadcast(profile: str, *, bypass_spam_lock: bool = False) -> tuple[bool, str | None]:
-    task = _tasks.get(profile)
-    if task and not task.done():
-        return True, None
     issue = await get_broadcast_issue(profile)
     if not bypass_spam_lock and issue and issue.issue_type in SPAM_LOCK_ISSUE_TYPES:
         await set_running(profile, False)
@@ -371,8 +464,11 @@ async def start_broadcast(profile: str, *, bypass_spam_lock: bool = False) -> tu
         return False, str(exc)
     else:
         await release_user_client(int(profile))
-    await set_running(profile, True)
-    _tasks[profile] = asyncio.create_task(_broadcast_loop(profile))
+    await schedule_broadcast_start(
+        profile,
+        delay_seconds=0,
+        rest_every_minutes=REST_EVERY_MINUTES,
+    )
     return True, None
 
 
@@ -471,6 +567,8 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
 
 async def stop_broadcast(profile: str):
     await set_running(profile, False)
+    # If this process owns the active cycle, stop immediately. A different
+    # worker notices is_running=False through its lease guard within seconds.
     task = _tasks.get(profile)
     if task and not task.done():
         task.cancel()
@@ -481,29 +579,25 @@ async def stop_broadcast(profile: str):
 
 
 async def resume_running_profiles():
-    from repository import get_all_running_profiles
-
-    profiles = await get_all_running_profiles()
-    if profiles and BROADCAST_RESUME_DELAY_SECONDS:
-        logger.info(
-            "%s ta faol profil deploydan keyin %s soniyada qayta ishga tushadi",
-            len(profiles),
-            BROADCAST_RESUME_DELAY_SECONDS,
-        )
-        await asyncio.sleep(BROADCAST_RESUME_DELAY_SECONDS)
-
-    for profile in profiles:
-        if profile.isdigit():
-            task = _tasks.get(profile)
-            if not task or task.done():
-                _tasks[profile] = asyncio.create_task(_broadcast_loop(profile))
+    global _worker_task
+    if _worker_task and not _worker_task.done():
+        await _worker_task
+        return
+    _worker_task = asyncio.create_task(_worker_loop())
+    await _worker_task
 
 
 async def shutdown_broadcaster() -> None:
     """Cancel local tasks without changing persisted running flags."""
+    global _worker_task
+    if _worker_task and not _worker_task.done():
+        _worker_task.cancel()
     tasks = [task for task in _tasks.values() if not task.done()]
     for task in tasks:
         task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     _tasks.clear()
+    if _worker_task:
+        await asyncio.gather(_worker_task, return_exceptions=True)
+    _worker_task = None

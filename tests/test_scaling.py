@@ -74,6 +74,41 @@ class ScalingTests(unittest.IsolatedAsyncioTestCase):
             client.disconnect.assert_awaited_once()
             self.assertNotIn(user_id, telethon_clients._clients)
 
+    async def test_reclaimed_cycle_does_not_send_the_same_group_twice(self):
+        sent_to = []
+
+        class Client:
+            async def send_message(self, chat_id, *_args, **_kwargs):
+                sent_to.append(chat_id)
+
+        cycle_started = __import__("datetime").datetime.utcnow()
+        already_sent = SimpleNamespace(chat_id=-1001, title="Sent")
+        pending = SimpleNamespace(chat_id=-1002, title="Pending")
+
+        async def no_wait(_profile, _seconds, _started_at, next_rest_at):
+            return next_rest_at, True
+
+        with (
+            patch.object(broadcaster, "get_user_client", new=AsyncMock(return_value=Client())),
+            patch.object(broadcaster, "release_user_client", new=AsyncMock()),
+            patch.object(broadcaster, "mark_group_success", new=AsyncMock()),
+            patch.object(broadcaster, "clear_group_cooldown", new=AsyncMock()),
+            patch.object(broadcaster, "_limited_sleep", new=no_wait),
+        ):
+            await broadcaster._send_cycle(
+                "123",
+                123,
+                "test",
+                [already_sent, pending],
+                {},
+                0,
+                999999,
+                cycle_started_at=cycle_started,
+                success_times={-1001: cycle_started},
+            )
+
+        self.assertEqual([-1002], sent_to)
+
 
 if __name__ == "__main__":
     unittest.main()

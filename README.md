@@ -57,6 +57,16 @@ python check_setup.py
 
 Railway `DATABASE_URL` ni `postgresql://` ko'rinishida bersa ham bo'ladi; kod uni avtomatik `postgresql+asyncpg://` ko'rinishiga moslaydi.
 
+### Yashirin workerlar
+
+Foydalanuvchilarga faqat bitta bot ko'rinadi. Qo'shimcha Railway servislarida
+`python worker.py` buyrug'i ishlatiladi; ular bot pollingini ishga tushirmaydi va
+faqat umumiy PostgreSQL navbatidan xabar yuborish vazifalarini oladi.
+
+Asosiy bot servisida alohida worker mavjud bo'lsa `BROADCAST_WORKER_ENABLED=false`
+qilinadi. Worker servislarida esa bu qiymat ahamiyatsiz. Bazadagi lease va cycle
+holati bitta profilni ikki worker bir vaqtda olishidan himoya qiladi.
+
 Lokal test uchun PostgreSQL bo'lmasa, `.env` ichida quyidagini ishlatish mumkin:
 
 ```env
