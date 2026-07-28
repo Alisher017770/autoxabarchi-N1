@@ -1,14 +1,16 @@
 import asyncio
 from datetime import datetime
 import html
+from io import BytesIO
 import logging
 import re
 
+import qrcode
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from broadcaster import retry_spam_check, spam_check_keyboard, start_broadcast, stop_broadcast
 from config import (
@@ -38,6 +40,7 @@ from keyboards import (
     pending_payments_kb,
     phone_kb,
     profile_kb,
+    qr_login_kb,
     RESERVED_MESSAGE_TEXTS,
     settings_kb,
     support_admin_kb,
@@ -79,12 +82,15 @@ from repository import (
 )
 from states import AdStates
 from telethon_clients import (
+    cancel_login,
     confirm_login_code,
     confirm_login_password,
+    finish_qr_login,
     get_user_client,
     get_user_dialog_groups,
     resend_login_code,
     send_login_code,
+    start_qr_login,
 )
 
 router = Router()
@@ -121,6 +127,7 @@ SUBSCRIBE_TEXTS = {"💳 Обуна бўлиш", "Обуна бўлиш", "💳 
 PAYMENT_PENDING_TEXTS = {"⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда"}
 SUPPORT_TEXTS = {"🆘 Админ билан боғланиш", "Админ билан боғланиш"}
 PHONE_LOGIN_TEXTS = {"📱 Телефон орқали улаш", "Телефон орқали улаш", "📱 Telefon orqali ulash", "Telefon orqali ulash"}
+QR_LOGIN_TEXTS = {"📷 QR-код орқали улаш", "QR-код орқали улаш"}
 GROUPS_TEXTS = {"👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar"}
 GROUP_LIST_TEXTS = {"📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати", "📋 Guruhlar ro'yxati", "Guruhlar ro'yxati"}
 GROUP_ADD_TEXTS = {"➕ Гуруҳ қўшиш", "Гуруҳ қўшиш", "➕ Guruh qo'shish", "Guruh qo'shish"}
@@ -1065,6 +1072,7 @@ async def sticker_id(message: Message):
 
 @router.message(F.text.in_(BACK_TEXTS))
 async def back_home(message: Message, state: FSMContext):
+    await cancel_login(message.from_user.id)
     await state.clear()
     await _show_home(message)
 
@@ -1202,6 +1210,98 @@ async def receive_support_reply(message: Message, state: FSMContext, bot: Bot):
 
     await state.clear()
     await message.answer(f"✅ Жавоб юборилди.\nФойдаланувчи ID: {user_id}", reply_markup=admin_menu_kb())
+
+
+def _qr_image(url: str) -> BufferedInputFile:
+    qr = qrcode.QRCode(version=None, box_size=10, border=3)
+    qr.add_data(url)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+    output = BytesIO()
+    image.save(output, format="PNG")
+    return BufferedInputFile(output.getvalue(), filename="telegram-login-qr.png")
+
+
+async def _delete_message_safely(message: Message):
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "cancel_qr_login")
+async def cancel_qr_login(callback: CallbackQuery, state: FSMContext):
+    await cancel_login(callback.from_user.id)
+    await state.clear()
+    await callback.answer("QR орқали улаш бекор қилинди.")
+    await _delete_message_safely(callback.message)
+    await callback.message.answer(
+        "❌ QR орқали улаш бекор қилинди.",
+        reply_markup=profile_kb(),
+    )
+
+
+@router.message(F.text.in_(QR_LOGIN_TEXTS))
+async def qr_login(message: Message, state: FSMContext):
+    if message.chat.type != "private":
+        await message.answer("QR орқали профилни фақат ботнинг шахсий чатида уланг.")
+        return
+
+    progress = await message.answer("📷 QR-код тайёрланмоқда...")
+    await state.set_state(AdStates.waiting_qr_login)
+    try:
+        url, lifetime = await start_qr_login(message.from_user.id)
+        qr_message = await message.answer_photo(
+            _qr_image(url),
+            caption=(
+                "📷 <b>QR-кодни сканер қилинг</b>\n\n"
+                "Telegram иловасида:\n"
+                "<b>Созламалар → Қурилмалар → Қурилма улаш</b>\n\n"
+                f"⏰ Амал қилиш вақти: тахминан {max(1, lifetime // 60)} дақиқа\n"
+                "🔐 QR-кодни ҳеч кимга юборманг."
+            ),
+            parse_mode="HTML",
+            reply_markup=qr_login_kb(),
+        )
+    except Exception as exc:
+        await state.clear()
+        await _delete_message_safely(progress)
+        await message.answer(f"❌ QR-код тайёрланмади: {exc}", reply_markup=profile_kb())
+        return
+
+    await _delete_message_safely(progress)
+    try:
+        outcome = await finish_qr_login(message.from_user.id)
+    except Exception as exc:
+        await state.clear()
+        await _delete_message_safely(qr_message)
+        await message.answer(f"❌ QR орқали уланмади: {exc}", reply_markup=profile_kb())
+        return
+
+    if outcome == "cancelled":
+        return
+
+    await _delete_message_safely(qr_message)
+    if outcome == "expired":
+        await state.clear()
+        await message.answer(
+            "⌛ QR-код вақти тугади. Янги QR-код олиш учун тугмани қайта босинг.",
+            reply_markup=profile_kb(),
+        )
+        return
+    if outcome == "password":
+        await state.set_state(AdStates.waiting_login_password)
+        await message.answer(
+            "🔐 Аккаунтингизда 2FA парол бор. Telegram паролингизни юборинг."
+        )
+        return
+
+    await state.clear()
+    await message.answer(
+        "✅ Профил QR-код орқали муваффақиятли уланди.\n\n"
+        "Энди 2-қадам: «💳 Обуна бўлиш» тугмасини босинг.",
+        reply_markup=await _main_kb(message),
+    )
 
 
 @router.message(F.text.in_(PHONE_LOGIN_TEXTS))

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from telethon import TelegramClient
 from telethon.errors import AuthKeyDuplicatedError, PhoneCodeInvalidError, SessionPasswordNeededError
@@ -14,6 +15,7 @@ CONNECT_TIMEOUT_SECONDS = 25
 _clients: dict[int, TelegramClient] = {}
 _login_clients: dict[int, TelegramClient] = {}
 _login_phones: dict[int, str] = {}
+_qr_login_tasks: dict[int, asyncio.Task] = {}
 
 
 def _new_client(session: StringSession | str | None = None) -> TelegramClient:
@@ -80,6 +82,76 @@ def _login_code_delivery_text(sent_code) -> str:
     return "📩 Код Telegram томонидан юборилди. Telegram иловаси ва SMS хабарларни текширинг."
 
 
+async def start_qr_login(user_id: int) -> tuple[str, int]:
+    await cancel_login(user_id)
+    client = _new_client()
+    try:
+        await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
+        qr_login = await asyncio.wait_for(
+            client.qr_login(),
+            timeout=CONNECT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        await client.disconnect()
+        raise
+
+    _login_clients[user_id] = client
+    _qr_login_tasks[user_id] = asyncio.create_task(qr_login.wait())
+    seconds = max(
+        1,
+        int((qr_login.expires - datetime.now(timezone.utc)).total_seconds()),
+    )
+    return qr_login.url, seconds
+
+
+async def finish_qr_login(user_id: int) -> str:
+    client = _login_clients.get(user_id)
+    task = _qr_login_tasks.get(user_id)
+    if not client or not task:
+        return "cancelled"
+
+    try:
+        user = await task
+    except asyncio.CancelledError:
+        return "cancelled"
+    except asyncio.TimeoutError:
+        await _discard_pending_login(user_id, client)
+        return "expired"
+    except SessionPasswordNeededError:
+        _qr_login_tasks.pop(user_id, None)
+        return "password"
+    except Exception:
+        await _discard_pending_login(user_id, client)
+        raise
+
+    phone = _normalized_user_phone(getattr(user, "phone", None))
+    await _save_authorized_login(user_id, client, phone)
+    return "success"
+
+
+def _normalized_user_phone(phone: str | None) -> str:
+    if not phone:
+        return "QR орқали уланган"
+    return phone if phone.startswith("+") else f"+{phone}"
+
+
+async def _save_authorized_login(user_id: int, client: TelegramClient, phone: str):
+    await save_user_session(user_id, phone, client.session.save())
+    _clients[user_id] = client
+    _login_clients.pop(user_id, None)
+    _login_phones.pop(user_id, None)
+    _qr_login_tasks.pop(user_id, None)
+
+
+async def _discard_pending_login(user_id: int, client: TelegramClient):
+    if _login_clients.get(user_id) is client:
+        _login_clients.pop(user_id, None)
+        _login_phones.pop(user_id, None)
+        _qr_login_tasks.pop(user_id, None)
+    if client.is_connected():
+        await client.disconnect()
+
+
 async def confirm_login_code(user_id: int, code: str) -> bool:
     client = _login_clients.get(user_id)
     phone = _login_phones.get(user_id)
@@ -93,27 +165,27 @@ async def confirm_login_code(user_id: int, code: str) -> bool:
     except PhoneCodeInvalidError as exc:
         raise RuntimeError("Код нотўғри. Қайта текшириб юборинг.") from exc
 
-    await save_user_session(user_id, phone, client.session.save())
-    _clients[user_id] = client
-    _login_clients.pop(user_id, None)
-    _login_phones.pop(user_id, None)
+    await _save_authorized_login(user_id, client, phone)
     return True
 
 
 async def confirm_login_password(user_id: int, password: str):
     client = _login_clients.get(user_id)
     phone = _login_phones.get(user_id)
-    if not client or not phone:
+    if not client:
         raise RuntimeError("Кириш жараёни топилмади. Қайтадан уриниб кўринг.")
 
     await client.sign_in(password=password)
-    await save_user_session(user_id, phone, client.session.save())
-    _clients[user_id] = client
-    _login_clients.pop(user_id, None)
-    _login_phones.pop(user_id, None)
+    if not phone:
+        user = await client.get_me()
+        phone = _normalized_user_phone(getattr(user, "phone", None))
+    await _save_authorized_login(user_id, client, phone)
 
 
 async def cancel_login(user_id: int):
+    task = _qr_login_tasks.pop(user_id, None)
+    if task and not task.done():
+        task.cancel()
     client = _login_clients.pop(user_id, None)
     _login_phones.pop(user_id, None)
     if client and client.is_connected():
@@ -176,6 +248,10 @@ async def get_user_dialog_groups(user_id: int, limit: int = 50) -> list[dict]:
 
 
 async def disconnect_all():
+    for task in list(_qr_login_tasks.values()):
+        if not task.done():
+            task.cancel()
+    _qr_login_tasks.clear()
     for client in list(_clients.values()) + list(_login_clients.values()):
         if client.is_connected():
             await client.disconnect()

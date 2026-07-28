@@ -4,3 +4,4 @@ SQLAlchemy==2.0.30
 asyncpg==0.29.0
 python-dotenv==1.0.1
 aiosqlite==0.20.0
+qrcode[pil]==8.2
