@@ -44,6 +44,21 @@ class Settings(Base):
     is_running: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class BroadcastJob(Base):
+    """Distributed queue state for one profile's next broadcast cycle."""
+    __tablename__ = "broadcast_jobs"
+
+    profile: Mapped[str] = mapped_column(String(20), primary_key=True)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    run_started_at: Mapped[datetime] = mapped_column(DateTime)
+    next_rest_at: Mapped[datetime] = mapped_column(DateTime)
+    cycle_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class UserAccount(Base):
     __tablename__ = "user_accounts"
 

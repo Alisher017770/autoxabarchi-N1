@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, delete, func, or_, update, cast, String
+from sqlalchemy import select, delete, exists, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import BotConfig, BroadcastIssue, Group, GroupCooldown, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 
 
 async def get_settings(profile: str) -> Settings:
@@ -67,6 +67,202 @@ async def get_all_running_profiles() -> list[str]:
     async with async_session() as session:
         result = await session.execute(select(Settings).where(Settings.is_running.is_(True)))
         return [s.profile for s in result.scalars().all()]
+
+
+async def schedule_broadcast_start(
+    profile: str,
+    *,
+    delay_seconds: int,
+    rest_every_minutes: int,
+) -> None:
+    """Create/reset a queue job when the user presses Start."""
+    now = datetime.utcnow()
+    async with async_session() as session:
+        settings = await session.get(Settings, profile)
+        if settings is None:
+            settings = Settings(profile=profile, interval_minutes=15, is_running=True)
+            session.add(settings)
+        else:
+            settings.is_running = True
+        job = await session.get(BroadcastJob, profile)
+        if job is None:
+            job = BroadcastJob(
+                profile=profile,
+                next_run_at=now + timedelta(seconds=delay_seconds),
+                run_started_at=now,
+                next_rest_at=now + timedelta(minutes=rest_every_minutes),
+            )
+            session.add(job)
+        else:
+            job.generation = (job.generation or 0) + 1
+            job.next_run_at = now + timedelta(seconds=delay_seconds)
+            job.run_started_at = now
+            job.next_rest_at = now + timedelta(minutes=rest_every_minutes)
+            # Do not steal an active lease. Its worker observes is_running=False
+            # on Stop and releases safely before a restarted job is claimed.
+            if not job.lease_until or job.lease_until <= now:
+                job.cycle_started_at = None
+                job.lease_owner = None
+                job.lease_until = None
+        job.updated_at = now
+        await session.commit()
+
+
+async def prepare_running_broadcast_jobs(
+    *,
+    delay_seconds: int,
+    rest_every_minutes: int,
+) -> int:
+    """Backfill queue rows for profiles that were running before a deploy."""
+    now = datetime.utcnow()
+    created = 0
+    async with async_session() as session:
+        result = await session.execute(select(Settings).where(Settings.is_running.is_(True)))
+        for settings in result.scalars().all():
+            job = await session.get(BroadcastJob, settings.profile)
+            if job is None:
+                try:
+                    async with session.begin_nested():
+                        session.add(BroadcastJob(
+                            profile=settings.profile,
+                            next_run_at=now + timedelta(seconds=delay_seconds),
+                            run_started_at=now,
+                            next_rest_at=now + timedelta(minutes=rest_every_minutes),
+                        ))
+                        await session.flush()
+                    created += 1
+                except IntegrityError:
+                    # Another worker created the same row during a rolling deploy.
+                    pass
+        await session.commit()
+    return created
+
+
+async def claim_due_broadcast_jobs(
+    owner: str,
+    *,
+    limit: int,
+    lease_seconds: int,
+) -> list[BroadcastJob]:
+    """Atomically lease due jobs; SKIP LOCKED lets workers share the queue."""
+    if limit <= 0:
+        return []
+    now = datetime.utcnow()
+    lease_until = now + timedelta(seconds=lease_seconds)
+    async with async_session() as session:
+        stmt = (
+            select(BroadcastJob)
+            .join(Settings, Settings.profile == BroadcastJob.profile)
+            .where(
+                Settings.is_running.is_(True),
+                BroadcastJob.next_run_at <= now,
+                or_(BroadcastJob.lease_until.is_(None), BroadcastJob.lease_until <= now),
+            )
+            .order_by(BroadcastJob.next_run_at, BroadcastJob.profile)
+            .limit(limit)
+        )
+        if session.bind and session.bind.dialect.name == "postgresql":
+            stmt = stmt.with_for_update(skip_locked=True, of=BroadcastJob)
+        result = await session.execute(stmt)
+        jobs = list(result.scalars().all())
+        for job in jobs:
+            job.lease_owner = owner
+            job.lease_until = lease_until
+            if job.cycle_started_at is None:
+                job.cycle_started_at = now
+            job.updated_at = now
+        await session.commit()
+        for job in jobs:
+            session.expunge(job)
+        return jobs
+
+
+async def renew_broadcast_job(profile: str, owner: str, generation: int, lease_seconds: int) -> bool:
+    """Renew only while this worker owns the job and the user still wants it running."""
+    now = datetime.utcnow()
+    running = exists(
+        select(Settings.profile).where(
+            Settings.profile == profile,
+            Settings.is_running.is_(True),
+        )
+    )
+    async with async_session() as session:
+        result = await session.execute(
+            update(BroadcastJob)
+            .where(
+                BroadcastJob.profile == profile,
+                BroadcastJob.lease_owner == owner,
+                BroadcastJob.generation == generation,
+                running,
+            )
+            .values(
+                lease_until=now + timedelta(seconds=lease_seconds),
+                updated_at=now,
+            )
+        )
+        await session.commit()
+        return bool(result.rowcount)
+
+
+async def complete_broadcast_job(
+    profile: str,
+    owner: str,
+    generation: int,
+    *,
+    next_run_at: datetime,
+    next_rest_at: datetime | None = None,
+) -> bool:
+    values = {
+        "next_run_at": next_run_at,
+        "cycle_started_at": None,
+        "lease_owner": None,
+        "lease_until": None,
+        "updated_at": datetime.utcnow(),
+    }
+    if next_rest_at is not None:
+        values["next_rest_at"] = next_rest_at
+    async with async_session() as session:
+        result = await session.execute(
+            update(BroadcastJob)
+            .where(
+                BroadcastJob.profile == profile,
+                BroadcastJob.lease_owner == owner,
+                BroadcastJob.generation == generation,
+            )
+            .values(**values)
+        )
+        await session.commit()
+        return bool(result.rowcount)
+
+
+async def release_broadcast_job(
+    profile: str,
+    owner: str,
+    generation: int,
+    *,
+    retry_seconds: int = 5,
+) -> None:
+    now = datetime.utcnow()
+    async with async_session() as session:
+        await session.execute(
+            update(BroadcastJob)
+            .where(BroadcastJob.profile == profile, BroadcastJob.lease_owner == owner)
+            .values(
+                next_run_at=now + timedelta(seconds=retry_seconds),
+                lease_owner=None,
+                lease_until=None,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+
+async def get_group_success_times(profile: str) -> dict[int, datetime]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(GroupSuccess).where(GroupSuccess.profile == profile)
+        )
+        return {row.chat_id: row.last_success_at for row in result.scalars().all()}
 
 
 async def stop_all_running_profiles():

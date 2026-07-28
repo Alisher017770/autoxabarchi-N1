@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
-from config import BOT_BRAND, BOT_TOKEN, validate_config
+from config import BOT_BRAND, BOT_TOKEN, BROADCAST_WORKER_ENABLED, validate_config
 from broadcaster import configure_broadcaster_bot, resume_running_profiles, shutdown_broadcaster
 from db import init_db
 from handlers import router as main_router
@@ -50,16 +50,24 @@ async def main():
 
     dp.include_router(main_router)
 
-    resume_task = asyncio.create_task(resume_running_profiles())
+    resume_task = (
+        asyncio.create_task(resume_running_profiles())
+        if BROADCAST_WORKER_ENABLED
+        else None
+    )
     monitor_task = asyncio.create_task(subscription_monitor(bot))
 
     try:
         logger.info("Бот ишга тушди")
         await dp.start_polling(bot)
     finally:
-        resume_task.cancel()
+        if resume_task:
+            resume_task.cancel()
         monitor_task.cancel()
-        await asyncio.gather(resume_task, monitor_task, return_exceptions=True)
+        await asyncio.gather(
+            *(task for task in (resume_task, monitor_task) if task is not None),
+            return_exceptions=True,
+        )
         await shutdown_broadcaster()
         await disconnect_all()
 
