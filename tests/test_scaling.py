@@ -5,9 +5,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import broadcaster
 import telethon_clients
+from telethon.tl.types import InputPeerChannel
 
 
 class ScalingTests(unittest.IsolatedAsyncioTestCase):
+    def test_stored_channel_peer_can_be_rebuilt_on_another_worker(self):
+        target = broadcaster._stored_peer(-1001234567890, ("channel", 987654321))
+        self.assertIsInstance(target, InputPeerChannel)
+        self.assertEqual(1234567890, target.channel_id)
+        self.assertEqual(987654321, target.access_hash)
+
     async def test_300_profiles_never_exceed_broadcast_connection_limit(self):
         active = 0
         max_active = 0

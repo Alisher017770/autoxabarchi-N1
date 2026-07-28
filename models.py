@@ -34,6 +34,16 @@ class GroupSuccess(Base):
     last_success_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class GroupPeer(Base):
+    """Telegram access data needed to send to channels from a fresh worker."""
+    __tablename__ = "group_peers"
+
+    profile: Mapped[str] = mapped_column(String(20), primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    peer_type: Mapped[str] = mapped_column(String(16))
+    access_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
 class Settings(Base):
     """Har bir profil uchun bitta qator: xabar matni, interval, holat."""
     __tablename__ = "settings"

@@ -15,7 +15,7 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    from models import BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount  # noqa
+    from models import BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount  # noqa
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         if engine.dialect.name == "postgresql":

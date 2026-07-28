@@ -37,6 +37,14 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(broadcaster._is_account_spam_error(Exception("CHAT_SEND_PLAIN_FORBIDDEN")))
         self.assertFalse(broadcaster._is_account_spam_error(Exception("CHAT_WRITE_FORBIDDEN")))
 
+    def test_generic_telegram_write_forbidden_is_detected(self):
+        self.assertTrue(
+            broadcaster._is_write_forbidden_error(
+                Exception("RPCError 403: CHAT_SEND_PLAIN_FORBIDDEN")
+            )
+        )
+        self.assertFalse(broadcaster._is_write_forbidden_error(Exception("temporary network error")))
+
     def test_stops_only_when_every_attempt_is_write_forbidden(self):
         self.assertTrue(broadcaster._all_attempts_write_forbidden(22, 0, 22))
         self.assertFalse(broadcaster._all_attempts_write_forbidden(4, 0, 4))
