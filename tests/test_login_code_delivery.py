@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from telethon_clients import _login_code_delivery_text
+from telethon_clients import _normalized_user_phone
 
 
 def _sent_code(type_name: str):
@@ -26,3 +27,12 @@ def test_unknown_delivery_has_safe_fallback():
 
     assert "Telegram иловаси" in text
     assert "SMS" in text
+
+
+def test_qr_login_phone_is_saved_in_international_format():
+    assert _normalized_user_phone("998901234567") == "+998901234567"
+    assert _normalized_user_phone("+998901234567") == "+998901234567"
+
+
+def test_qr_login_without_visible_phone_has_safe_label():
+    assert _normalized_user_phone(None) == "QR орқали уланган"

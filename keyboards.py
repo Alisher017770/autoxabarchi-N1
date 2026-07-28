@@ -10,6 +10,7 @@ RESERVED_MESSAGE_TEXTS = {
     "⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga",
     "🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel",
     "👤 Профил улаш", "Профил улаш", "👤 Profil ulash", "Profil ulash",
+    "📷 QR-код орқали улаш", "QR-код орқали улаш",
     "💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish",
     "⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда",
     "🆘 Админ билан боғланиш", "Админ билан боғланиш",
@@ -73,11 +74,18 @@ def main_menu_kb(
 def profile_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="📷 QR-код орқали улаш")],
             [KeyboardButton(text="📱 Телефон орқали улаш")],
             [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,
     )
+
+
+def qr_login_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Бекор қилиш", callback_data="cancel_qr_login")
+    return kb.as_markup()
 
 
 def phone_kb() -> ReplyKeyboardMarkup:
