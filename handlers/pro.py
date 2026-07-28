@@ -1258,11 +1258,12 @@ async def qr_login(message: Message, state: FSMContext):
                 "📷 <b>QR-кодни сканер қилинг</b>\n\n"
                 "Telegram иловасида:\n"
                 "<b>Созламалар → Қурилмалар → Қурилма улаш</b>\n\n"
+                "📲 Агар битта телефон бўлса, пастдаги «Шу телефонда улаш» тугмасини босинг.\n\n"
                 f"⏰ Амал қилиш вақти: тахминан {max(1, lifetime // 60)} дақиқа\n"
                 "🔐 QR-кодни ҳеч кимга юборманг."
             ),
             parse_mode="HTML",
-            reply_markup=qr_login_kb(),
+            reply_markup=qr_login_kb(url),
         )
     except Exception as exc:
         await state.clear()
