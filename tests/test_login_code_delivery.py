@@ -1,12 +1,17 @@
 from types import SimpleNamespace
 
-from telethon_clients import _login_code_delivery_text
-from telethon_clients import _normalized_user_phone
+from telethon_clients import (
+    _login_code_delivery_text,
+    _normalized_user_phone,
+    _remember_login_code_info,
+    login_code_next_delivery_text,
+)
 
 
-def _sent_code(type_name: str):
+def _sent_code(type_name: str, next_type_name: str | None = None, timeout: int = 0):
     delivery_type = type(type_name, (), {})
-    return SimpleNamespace(type=delivery_type())
+    next_type = type(next_type_name, (), {})() if next_type_name else None
+    return SimpleNamespace(type=delivery_type(), next_type=next_type, timeout=timeout)
 
 
 def test_app_delivery_points_to_telegram_service_chat():
@@ -27,6 +32,26 @@ def test_unknown_delivery_has_safe_fallback():
 
     assert "Telegram иловаси" in text
     assert "SMS" in text
+
+
+def test_next_sms_method_and_timeout_are_preserved():
+    info = _remember_login_code_info(
+        123,
+        _sent_code("SentCodeTypeApp", "CodeTypeSms", timeout=60),
+    )
+
+    assert info.delivery_type == "SentCodeTypeApp"
+    assert info.next_type == "CodeTypeSms"
+    assert info.timeout == 60
+    assert "60 сониядан кейин" in login_code_next_delivery_text(info)
+    assert "SMS" in login_code_next_delivery_text(info)
+
+
+def test_missing_next_method_recommends_qr():
+    info = _remember_login_code_info(124, _sent_code("SentCodeTypeApp"))
+
+    assert info.next_type is None
+    assert "QR-код" in login_code_next_delivery_text(info)
 
 
 def test_qr_login_phone_is_saved_in_international_format():

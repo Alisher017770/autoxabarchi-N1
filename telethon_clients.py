@@ -1,5 +1,9 @@
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
+import math
+import time
 
 from telethon import TelegramClient
 from telethon.errors import AuthKeyDuplicatedError, PhoneCodeInvalidError, SessionPasswordNeededError
@@ -11,11 +15,23 @@ from config import API_ID, API_HASH
 from repository import clear_user_session, get_user_session, save_user_session
 
 CONNECT_TIMEOUT_SECONDS = 25
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LoginCodeInfo:
+    delivery_text: str
+    delivery_type: str
+    next_type: str | None
+    timeout: int
+    retry_after: int
 
 _clients: dict[int, TelegramClient] = {}
 _login_clients: dict[int, TelegramClient] = {}
 _login_phones: dict[int, str] = {}
 _qr_login_tasks: dict[int, asyncio.Task] = {}
+_login_code_infos: dict[int, LoginCodeInfo] = {}
+_login_code_resend_at: dict[int, float] = {}
 
 
 def _new_client(session: StringSession | str | None = None) -> TelegramClient:
@@ -50,20 +66,64 @@ async def send_login_code(user_id: int, phone: str):
 
     _login_clients[user_id] = client
     _login_phones[user_id] = phone
-    return _login_code_delivery_text(sent_code)
+    return _remember_login_code_info(user_id, sent_code)
 
 
-async def resend_login_code(user_id: int) -> str:
+async def resend_login_code(user_id: int) -> LoginCodeInfo:
     client = _login_clients.get(user_id)
     phone = _login_phones.get(user_id)
     if not client or not phone:
         raise RuntimeError("Код сўраш жараёни топилмади. Профилни қайта улаб кўринг.")
 
+    retry_after = max(0, math.ceil(_login_code_resend_at.get(user_id, 0) - time.monotonic()))
+    if retry_after:
+        raise RuntimeError(f"Telegram яна сўрашга ҳали рухсат бермади. {retry_after} сония кутинг.")
+
     sent_code = await asyncio.wait_for(
         client.send_code_request(phone),
         timeout=CONNECT_TIMEOUT_SECONDS,
     )
-    return _login_code_delivery_text(sent_code)
+    return _remember_login_code_info(user_id, sent_code)
+
+
+def _remember_login_code_info(user_id: int, sent_code) -> LoginCodeInfo:
+    delivery_type = type(getattr(sent_code, "type", None)).__name__
+    next_value = getattr(sent_code, "next_type", None)
+    next_type = type(next_value).__name__ if next_value is not None else None
+    timeout = max(0, int(getattr(sent_code, "timeout", 0) or 0))
+    info = LoginCodeInfo(
+        delivery_text=_login_code_delivery_text(sent_code),
+        delivery_type=delivery_type,
+        next_type=next_type,
+        timeout=timeout,
+        retry_after=timeout,
+    )
+    _login_code_infos[user_id] = info
+    _login_code_resend_at[user_id] = time.monotonic() + timeout
+    logger.info(
+        "[%s] Telegram login code request accepted: type=%s next_type=%s timeout=%s",
+        user_id,
+        delivery_type,
+        next_type or "none",
+        timeout,
+    )
+    return info
+
+
+def login_code_next_delivery_text(info: LoginCodeInfo) -> str:
+    if not info.next_type:
+        return "Telegram ҳозирча бошқа етказиш усулини таклиф қилмади. QR-код орқали уланишни ишлатинг."
+    if "Sms" in info.next_type:
+        method = "SMS"
+    elif "Call" in info.next_type:
+        method = "қўнғироқ"
+    elif "Email" in info.next_type:
+        method = "электрон почта"
+    else:
+        method = "бошқа усул"
+    if info.timeout:
+        return f"⏳ {info.timeout} сониядан кейин кодни {method} орқали қайта сўраш мумкин."
+    return f"Кодни {method} орқали қайта сўраш мумкин."
 
 
 def _login_code_delivery_text(sent_code) -> str:
@@ -141,6 +201,8 @@ async def _save_authorized_login(user_id: int, client: TelegramClient, phone: st
     _login_clients.pop(user_id, None)
     _login_phones.pop(user_id, None)
     _qr_login_tasks.pop(user_id, None)
+    _login_code_infos.pop(user_id, None)
+    _login_code_resend_at.pop(user_id, None)
 
 
 async def _discard_pending_login(user_id: int, client: TelegramClient):
@@ -188,6 +250,8 @@ async def cancel_login(user_id: int):
         task.cancel()
     client = _login_clients.pop(user_id, None)
     _login_phones.pop(user_id, None)
+    _login_code_infos.pop(user_id, None)
+    _login_code_resend_at.pop(user_id, None)
     if client and client.is_connected():
         await client.disconnect()
 
