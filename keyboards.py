@@ -14,6 +14,7 @@ RESERVED_MESSAGE_TEXTS = {
     "⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда",
     "🆘 Админ билан боғланиш", "Админ билан боғланиш",
     "📱 Телефон орқали улаш", "Телефон орқали улаш",
+    "🔄 Кодни қайта сўраш", "Кодни қайта сўраш",
     "👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar",
     "📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати",
     "➕ Гуруҳ қўшиш", "Гуруҳ қўшиш",
@@ -83,6 +84,16 @@ def phone_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📲 Рақамни юбориш", request_contact=True)],
+            [KeyboardButton(text="⬅️ Орқага")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def login_code_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🔄 Кодни қайта сўраш")],
             [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,

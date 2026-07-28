@@ -30,6 +30,7 @@ from keyboards import (
     group_delete_kb,
     groups_kb,
     interval_kb,
+    login_code_kb,
     main_menu_kb,
     manual_interval_kb,
     payment_admin_kb,
@@ -82,6 +83,7 @@ from telethon_clients import (
     confirm_login_password,
     get_user_client,
     get_user_dialog_groups,
+    resend_login_code,
     send_login_code,
 )
 
@@ -1227,7 +1229,7 @@ async def receive_phone(message: Message, state: FSMContext):
 
     await message.answer("📩 Код юборилмоқда...")
     try:
-        await send_login_code(message.from_user.id, phone)
+        delivery_text = await send_login_code(message.from_user.id, phone)
     except Exception as exc:
         await message.answer(f"❌ Код юборилмади: {exc}", reply_markup=profile_kb())
         await state.clear()
@@ -1236,8 +1238,28 @@ async def receive_phone(message: Message, state: FSMContext):
     await state.set_state(AdStates.waiting_login_code)
     await message.answer(
         "✅ Код юборилди.\n\n"
-        "📩 Telegram'дан келган кодни юборинг.\n"
-        "Кодни нуқта билан ёзсангиз ҳам бўлади. Масалан: 54.568"
+        f"{delivery_text}\n\n"
+        "🔎 Telegram иловасида «Telegram» деб қидириб, кўк белгили расмий хизмат чатини ҳам текширинг.\n"
+        "Кодни нуқта билан ёзсангиз ҳам бўлади. Масалан: 54.568",
+        reply_markup=login_code_kb(),
+    )
+
+
+@router.message(AdStates.waiting_login_code, F.text.in_({"🔄 Кодни қайта сўраш", "Кодни қайта сўраш"}))
+async def resend_code(message: Message):
+    await message.answer("📩 Код қайта сўралмоқда...")
+    try:
+        delivery_text = await resend_login_code(message.from_user.id)
+    except Exception as exc:
+        await message.answer(
+            f"❌ Код қайта юборилмади: {exc}\n\n"
+            "Кўп марта босманг. 2 дақиқа кутиб, яна бир марта уриниб кўринг.",
+            reply_markup=login_code_kb(),
+        )
+        return
+    await message.answer(
+        f"✅ Код қайта сўралди.\n\n{delivery_text}",
+        reply_markup=login_code_kb(),
     )
 
 

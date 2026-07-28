@@ -38,13 +38,46 @@ async def send_login_code(user_id: int, phone: str):
     client = _new_client()
     try:
         await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
-        await asyncio.wait_for(client.send_code_request(phone), timeout=CONNECT_TIMEOUT_SECONDS)
+        sent_code = await asyncio.wait_for(
+            client.send_code_request(phone),
+            timeout=CONNECT_TIMEOUT_SECONDS,
+        )
     except Exception:
         await client.disconnect()
         raise
 
     _login_clients[user_id] = client
     _login_phones[user_id] = phone
+    return _login_code_delivery_text(sent_code)
+
+
+async def resend_login_code(user_id: int) -> str:
+    client = _login_clients.get(user_id)
+    phone = _login_phones.get(user_id)
+    if not client or not phone:
+        raise RuntimeError("Код сўраш жараёни топилмади. Профилни қайта улаб кўринг.")
+
+    sent_code = await asyncio.wait_for(
+        client.send_code_request(phone),
+        timeout=CONNECT_TIMEOUT_SECONDS,
+    )
+    return _login_code_delivery_text(sent_code)
+
+
+def _login_code_delivery_text(sent_code) -> str:
+    delivery_type = type(getattr(sent_code, "type", None)).__name__
+    if delivery_type == "SentCodeTypeApp":
+        return (
+            "📱 Код Telegram иловасидаги расмий «Telegram» хизмат чатига "
+            "юборилди. SMS кутманг."
+        )
+    if "Email" in delivery_type:
+        return "📧 Код Telegram аккаунтингизга уланган электрон почтага юборилди."
+    if "Call" in delivery_type:
+        return "📞 Код қўнғироқ орқали берилади. Кирувчи қўнғироқни текширинг."
+    if "Sms" in delivery_type or "Phrase" in delivery_type or "Word" in delivery_type:
+        return "📩 Код телефон рақамингизга SMS орқали юборилди."
+    return "📩 Код Telegram томонидан юборилди. Telegram иловаси ва SMS хабарларни текширинг."
 
 
 async def confirm_login_code(user_id: int, code: str) -> bool:
