@@ -17,6 +17,7 @@ from broadcaster import retry_spam_check, spam_check_keyboard, start_broadcast, 
 from config import (
     ADMIN_ID,
     BOT_BRAND,
+    GUIDE_CHANNEL_URL,
     SUBSCRIPTION_DAYS,
     WELCOME_STICKER_ID,
 )
@@ -33,6 +34,7 @@ from keyboards import (
     finance_kb,
     group_delete_kb,
     groups_kb,
+    guide_channel_kb,
     interval_kb,
     login_code_kb,
     main_menu_kb,
@@ -136,6 +138,7 @@ PROFILE_TEXTS = {"👤 Профил улаш", "Профил улаш", "👤 Pr
 SUBSCRIBE_TEXTS = {"💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish"}
 PAYMENT_PENDING_TEXTS = {"⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда"}
 SUPPORT_TEXTS = {"🆘 Админ билан боғланиш", "Админ билан боғланиш"}
+GUIDE_TEXTS = {"📹 Фойдаланиш қўлланмаси", "Фойдаланиш қўлланмаси"}
 PHONE_LOGIN_TEXTS = {"📱 Телефон орқали улаш", "Телефон орқали улаш", "📱 Telefon orqali ulash", "Telefon orqali ulash"}
 QR_LOGIN_TEXTS = {"📷 QR-код орқали улаш", "QR-код орқали улаш"}
 GROUPS_TEXTS = {"👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar"}
@@ -212,6 +215,9 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
         return False
 
     await state.clear()
+    if text in GUIDE_TEXTS:
+        await _show_guide(message)
+        return True
     if _is_admin(message):
         if text in ADMIN_USERS_TEXTS:
             await admin_users(message)
@@ -298,7 +304,19 @@ async def _show_home(message: Message):
             "4. 💬 Хабар ёзиш\n"
             "5. 🚀 Старт / Стоп"
         )
+    text += "\n\n📹 Биринчи марта ишлатаётган бўлсангиз, «Фойдаланиш қўлланмаси»ни кўринг."
     await message.answer(text, reply_markup=await _main_kb(message))
+
+
+async def _show_guide(message: Message):
+    await message.answer(
+        "📹 <b>Авто хабарчи N1 — фойдаланиш қўлланмаси</b>\n\n"
+        "Қисқа ва батафсил видеоларда профилни улашдан бошлаб, "
+        "автоматик хабар юборишни ишга туширишгача кўрсатилган.\n\n"
+        "⚠️ QR-кодингизни ҳеч кимга юборманг.",
+        parse_mode="HTML",
+        reply_markup=guide_channel_kb(GUIDE_CHANNEL_URL),
+    )
 
 
 async def _show_payment_request(message: Message, state: FSMContext):
@@ -1243,6 +1261,12 @@ async def ask_support_message(message: Message, state: FSMContext):
         "Матн, расм ёки файл юборишингиз мумкин. Админга исмингиз ва ID рақамингиз билан етказаман.\n\n"
         "Бекор қилиш учун «⬅️ Орқага»ни босинг."
     )
+
+
+@router.message(F.text.in_(GUIDE_TEXTS))
+async def show_guide(message: Message, state: FSMContext):
+    await state.clear()
+    await _show_guide(message)
 
 
 @router.message(AdStates.waiting_support_message)

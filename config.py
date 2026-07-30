@@ -54,6 +54,7 @@ PAYMENT_OWNER = os.getenv("PAYMENT_OWNER", "R.M")
 BASE_DIR = Path(__file__).resolve().parent
 WELCOME_IMAGE_PATH = os.getenv("WELCOME_IMAGE_PATH", str(BASE_DIR / "assets" / "welcome.png"))
 WELCOME_STICKER_ID = os.getenv("WELCOME_STICKER_ID", "")
+GUIDE_CHANNEL_URL = os.getenv("GUIDE_CHANNEL_URL", "https://t.me/+epn0LWo8lO4zYjY6")
 
 
 def validate_config() -> None:

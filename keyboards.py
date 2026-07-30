@@ -14,6 +14,7 @@ RESERVED_MESSAGE_TEXTS = {
     "💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish",
     "⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда",
     "🆘 Админ билан боғланиш", "Админ билан боғланиш",
+    "📹 Фойдаланиш қўлланмаси", "Фойдаланиш қўлланмаси",
     "📱 Телефон орқали улаш", "Телефон орқали улаш",
     "🔄 Кодни қайта сўраш", "Кодни қайта сўраш",
     "📩 Кодни кейинги усулда сўраш", "Кодни кейинги усулда сўраш",
@@ -64,6 +65,7 @@ def main_menu_kb(
             [KeyboardButton(text="🚀 Старт / Стоп")],
             [KeyboardButton(text="⚙️ Созламалар")],
         ])
+    keyboard.append([KeyboardButton(text="📹 Фойдаланиш қўлланмаси")])
     if not is_admin:
         keyboard.append([KeyboardButton(text="🆘 Админ билан боғланиш")])
     if is_admin:
@@ -72,6 +74,12 @@ def main_menu_kb(
         keyboard=keyboard,
         resize_keyboard=True,
     )
+
+
+def guide_channel_kb(url: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="▶️ Қўлланмани кўриш", url=url)
+    return kb.as_markup()
 
 
 def profile_kb() -> ReplyKeyboardMarkup:
