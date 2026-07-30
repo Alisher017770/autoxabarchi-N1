@@ -4,6 +4,7 @@ from datetime import datetime
 
 from aiogram import Bot
 
+from admin_alerts import save_admin_error
 from keyboards import main_menu_kb
 from repository import (
     list_expired_subscriptions_for_notice,
@@ -56,6 +57,7 @@ async def subscription_monitor(bot: Bot):
     while True:
         try:
             await check_subscriptions(bot)
-        except Exception:
+        except Exception as exc:
             logger.exception("Обуна мониторда хато")
+            await save_admin_error("subscription-monitor", "Обуна мониторингида хато", exc)
         await asyncio.sleep(60 * 60)

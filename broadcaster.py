@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from admin_alerts import save_admin_error
 from telethon.errors import (
     ChatWriteForbiddenError,
     FloodWaitError,
@@ -505,8 +506,13 @@ async def _process_broadcast_job(job) -> None:
     except asyncio.CancelledError:
         await release_broadcast_job(profile, _worker_owner, generation)
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("[%s] worker aylanasida kutilmagan xato", profile)
+        await save_admin_error(
+            f"worker-cycle:{type(exc).__name__}",
+            "Хабар тарқатиш worker циклида хато",
+            exc,
+        )
         await release_broadcast_job(profile, _worker_owner, generation, retry_seconds=30)
     finally:
         if _tasks.get(profile) is asyncio.current_task():

@@ -3,6 +3,7 @@ import logging
 
 from aiogram import Bot
 
+from admin_alerts import notify_critical_error
 from broadcaster import configure_broadcaster_bot, resume_running_profiles, shutdown_broadcaster
 from config import BOT_TOKEN, validate_config
 from db import init_db
@@ -21,6 +22,10 @@ async def main() -> None:
     try:
         logger.info("Yashirin yuboruvchi worker ishga tushmoqda")
         await resume_running_profiles()
+    except Exception as exc:
+        logger.exception("Yashirin worker jiddiy xato bilan to'xtadi")
+        await notify_critical_error(bot, "broadcast-worker-stopped", "Яширин worker тўхтади", exc)
+        raise
     finally:
         await shutdown_broadcaster()
         await disconnect_all()
