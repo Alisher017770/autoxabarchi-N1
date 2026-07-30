@@ -5,6 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
+from admin_alerts import notify_critical_error
 from config import BOT_BRAND, BOT_TOKEN, BROADCAST_WORKER_ENABLED, validate_config
 from broadcaster import configure_broadcaster_bot, resume_running_profiles, shutdown_broadcaster
 from db import init_db
@@ -59,7 +60,11 @@ async def main():
 
     try:
         logger.info("Бот ишга тушди")
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, close_bot_session=False)
+    except Exception as exc:
+        logger.exception("Bot polling jiddiy xato bilan to'xtadi")
+        await notify_critical_error(bot, "bot-polling-stopped", "Асосий бот тўхтади", exc)
+        raise
     finally:
         if resume_task:
             resume_task.cancel()
@@ -70,6 +75,7 @@ async def main():
         )
         await shutdown_broadcaster()
         await disconnect_all()
+        await bot.session.close()
 
 
 if __name__ == "__main__":

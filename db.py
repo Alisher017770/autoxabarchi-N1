@@ -15,8 +15,13 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    from models import BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount  # noqa
+    from models import AdminAlert, BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount  # noqa
     async with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            # Both Railway services start from the same repository. Serialize
+            # schema setup so simultaneous deploys cannot race while creating
+            # a new table.
+            await conn.execute(text("SELECT pg_advisory_xact_lock(7120260721)"))
         await conn.run_sync(Base.metadata.create_all)
         if engine.dialect.name == "postgresql":
             # create_all does not add columns to an existing table. These

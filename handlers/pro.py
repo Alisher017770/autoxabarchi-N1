@@ -10,8 +10,9 @@ from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, Message
 
+from admin_alerts import save_admin_error
 from broadcaster import retry_spam_check, spam_check_keyboard, start_broadcast, stop_broadcast
 from config import (
     ADMIN_ID,
@@ -65,6 +66,7 @@ from repository import (
     get_user_account,
     has_active_subscription,
     list_expiring_user_summaries,
+    list_recent_admin_alerts,
     list_pending_payments,
     list_groups,
     list_problem_users,
@@ -126,6 +128,7 @@ EXPIRING_ONE_DAY_TEXTS = {"1️⃣ 1 кун қолганлар", "1 кун қо�
 EXPIRING_THREE_DAYS_TEXTS = {"3️⃣ 3 кун қолганлар", "3 кун қолганлар"}
 FINANCE_TEXTS = {"💰 Ҳисоб-китоб", "Ҳисоб-китоб"}
 SERVER_COST_TEXTS = {"🧾 Сервер харажати", "Сервер харажати"}
+ADMIN_ERRORS_TEXTS = {"⚠️ Хатолар", "Хатолар"}
 
 BACK_TEXTS = {"⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga"}
 ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel"}
@@ -236,6 +239,8 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
             await admin_finance(message)
         elif text in SERVER_COST_TEXTS:
             await ask_admin_server_cost(message, state)
+        elif text in ADMIN_ERRORS_TEXTS:
+            await admin_errors(message)
         else:
             await message.answer(
                 "⚠️ Меню тугмаси хабар сифатида юборилмади. Керакли бўлимни қайта танланг.",
@@ -446,6 +451,43 @@ async def admin_stats(message: Message):
         f"✅ Тасдиқланган тўловлар: {stats['approved_payments']}",
         reply_markup=admin_menu_kb(),
     )
+
+
+@router.message(F.text.in_(ADMIN_ERRORS_TEXTS))
+async def admin_errors(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    alerts = await list_recent_admin_alerts(hours=72, limit=8)
+    if not alerts:
+        await message.answer(
+            "✅ Охирги 72 соатда тизим хатоси қайд этилмаган.",
+            reply_markup=admin_menu_kb(),
+        )
+        return
+    lines = ["⚠️ Охирги 72 соатдаги хатолар\n"]
+    for alert in alerts:
+        icon = "🚨" if alert.severity == "critical" else "⚠️"
+        lines.append(
+            f"{icon} {alert.title}\n"
+            f"🔁 {alert.count} марта · 🕒 {alert.last_seen_at:%Y-%m-%d %H:%M}\n"
+            f"{html.escape(alert.details[:300])}"
+        )
+    await message.answer("\n\n".join(lines), reply_markup=admin_menu_kb())
+
+
+@router.error()
+async def record_unhandled_bot_error(event: ErrorEvent):
+    await save_admin_error(
+        f"bot-handler:{type(event.exception).__name__}",
+        "Бот тугмаси ёки хабарини ишлашда хато",
+        event.exception,
+    )
+    logger.error(
+        "Bot yangilanishini ishlashda xato",
+        exc_info=(type(event.exception), event.exception, event.exception.__traceback__),
+    )
+    return True
 
 
 def _format_money(value: int) -> str:

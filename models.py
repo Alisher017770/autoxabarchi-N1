@@ -104,6 +104,20 @@ class BroadcastIssue(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AdminAlert(Base):
+    """Aggregated internal errors visible only to the bot administrator."""
+    __tablename__ = "admin_alerts"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    severity: Mapped[str] = mapped_column(String(16), default="error", index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    details: Mapped[str] = mapped_column(Text)
+    count: Mapped[int] = mapped_column(Integer, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class PendingPayment(Base):
     __tablename__ = "pending_payments"
 

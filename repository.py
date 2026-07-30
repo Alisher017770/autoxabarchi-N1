@@ -4,7 +4,7 @@ from sqlalchemy import select, delete, exists, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import AdminAlert, BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 
 
 def parse_money_amount(value: str | None) -> int:
@@ -798,6 +798,60 @@ async def clear_broadcast_issue(profile: str):
     async with async_session() as session:
         await session.execute(delete(BroadcastIssue).where(BroadcastIssue.profile == profile))
         await session.commit()
+
+
+async def record_admin_alert(
+    key: str,
+    title: str,
+    details: str,
+    severity: str = "error",
+    notify_cooldown_minutes: int = 30,
+) -> bool:
+    """Aggregate an error and return whether a critical notification is due."""
+    now = datetime.utcnow()
+    safe_key = key[:128]
+    async with async_session() as session:
+        alert = await session.get(AdminAlert, safe_key)
+        if alert is None:
+            alert = AdminAlert(
+                key=safe_key,
+                severity=severity,
+                title=title[:255],
+                details=details[-4000:],
+                count=1,
+                first_seen_at=now,
+                last_seen_at=now,
+            )
+            session.add(alert)
+        else:
+            alert.severity = severity
+            alert.title = title[:255]
+            alert.details = details[-4000:]
+            alert.count += 1
+            alert.last_seen_at = now
+
+        should_notify = severity == "critical" and (
+            alert.last_notified_at is None
+            or alert.last_notified_at <= now - timedelta(minutes=notify_cooldown_minutes)
+        )
+        if should_notify:
+            # Reserve this notification before Telegram I/O so simultaneous
+            # services cannot notify the admin about the same incident twice.
+            alert.last_notified_at = now
+        await session.commit()
+        return should_notify
+
+
+async def list_recent_admin_alerts(hours: int = 72, limit: int = 15) -> list[AdminAlert]:
+    since = datetime.utcnow() - timedelta(hours=hours)
+    async with async_session() as session:
+        result = await session.execute(
+            select(AdminAlert)
+            .where(AdminAlert.last_seen_at >= since)
+            .order_by(AdminAlert.last_seen_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
 
 async def count_users_by_subscription(active: bool) -> int:
