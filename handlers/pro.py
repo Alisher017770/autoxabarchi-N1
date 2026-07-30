@@ -48,6 +48,7 @@ from keyboards import (
     RESERVED_MESSAGE_TEXTS,
     settings_kb,
     support_admin_kb,
+    support_message_kb,
     subscriber_thanks_kb,
     subscription_offer_kb,
 )
@@ -1259,7 +1260,8 @@ async def ask_support_message(message: Message, state: FSMContext):
     await message.answer(
         "🆘 Муаммони қисқа ва тушунарли қилиб ёзинг.\n\n"
         "Матн, расм ёки файл юборишингиз мумкин. Админга исмингиз ва ID рақамингиз билан етказаман.\n\n"
-        "Бекор қилиш учун «⬅️ Орқага»ни босинг."
+        "Бекор қилиш учун «⬅️ Орқага»ни босинг.",
+        reply_markup=support_message_kb(),
     )
 
 
@@ -1274,6 +1276,13 @@ async def receive_support_message(message: Message, state: FSMContext, bot: Bot)
     if _is_back_text(message):
         await state.clear()
         await _show_home(message)
+        return
+    if (message.text or "") in RESERVED_MESSAGE_TEXTS:
+        await state.clear()
+        await message.answer(
+            "↩️ Админга мурожаат бекор қилинди. Керакли бўлимни қайта танланг.",
+            reply_markup=await _main_kb(message),
+        )
         return
     if not (message.text or message.photo or message.document or message.video or message.voice):
         await message.answer("Матн, расм, видео, овозли хабар ёки файл юборинг.")

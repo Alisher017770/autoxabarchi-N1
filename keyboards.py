@@ -203,6 +203,13 @@ def support_admin_kb(user_id: int) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def support_message_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⬅️ Орқага")]],
+        resize_keyboard=True,
+    )
+
+
 def admin_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
