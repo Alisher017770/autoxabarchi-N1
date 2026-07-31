@@ -15,7 +15,7 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    from models import AdminAlert, BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount  # noqa
+    from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount  # noqa
     async with engine.begin() as conn:
         if engine.dialect.name == "postgresql":
             # Both Railway services start from the same repository. Serialize

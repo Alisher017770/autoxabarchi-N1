@@ -4,7 +4,35 @@ from sqlalchemy import select, delete, exists, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import AdminAlert, BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+
+
+async def list_bot_admins() -> list[BotAdmin]:
+    async with async_session() as session:
+        result = await session.execute(select(BotAdmin).order_by(BotAdmin.added_at, BotAdmin.user_id))
+        return list(result.scalars().all())
+
+
+async def add_bot_admin(user_id: int, added_by: int, first_name: str | None = None) -> bool:
+    async with async_session() as session:
+        existing = await session.get(BotAdmin, user_id)
+        if existing:
+            return False
+        session.add(BotAdmin(user_id=user_id, first_name=first_name, added_by=added_by))
+        session.add(BotAdminAudit(actor_id=added_by, target_id=user_id, action="added"))
+        await session.commit()
+        return True
+
+
+async def remove_bot_admin(user_id: int, removed_by: int) -> bool:
+    async with async_session() as session:
+        existing = await session.get(BotAdmin, user_id)
+        if not existing:
+            return False
+        await session.delete(existing)
+        session.add(BotAdminAudit(actor_id=removed_by, target_id=user_id, action="removed"))
+        await session.commit()
+        return True
 
 
 def parse_money_amount(value: str | None) -> int:

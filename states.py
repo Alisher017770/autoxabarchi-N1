@@ -20,3 +20,5 @@ class AdStates(StatesGroup):
     waiting_admin_user_search = State()
     waiting_support_message = State()
     waiting_support_reply = State()
+    waiting_admin_add_id = State()
+    waiting_admin_remove_id = State()

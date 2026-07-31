@@ -43,6 +43,8 @@ RESERVED_MESSAGE_TEXTS = {
     "🔎 Фойдаланувчини қидириш", "⚠️ Муаммоли профиллар",
     "🚀 Ҳозир ишлаётганлар",
     "⏳ Обунаси тугаётганлар", "1️⃣ 1 кун қолганлар", "3️⃣ 3 кун қолганлар",
+    "👮 Админлар", "Админлар", "➕ Админ қўшиш", "Админ қўшиш",
+    "➖ Админни ўчириш", "Админни ўчириш", "📋 Админлар рўйхати", "Админлар рўйхати",
 }
 
 
@@ -210,17 +212,33 @@ def support_message_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def admin_menu_kb() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="👥 Фойдаланувчилар")],
-            [KeyboardButton(text="💳 Тўловлар")],
+def admin_menu_kb(is_owner: bool = False) -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="👥 Фойдаланувчилар")],
+        [KeyboardButton(text="💳 Тўловлар")],
+    ]
+    if is_owner:
+        keyboard.extend([
             [KeyboardButton(text="💰 Ҳисоб-китоб")],
             [KeyboardButton(text="⚠️ Хатолар")],
             [KeyboardButton(text="🎟 Обуна бериш"), KeyboardButton(text="🚫 Обунани ўчириш")],
             [KeyboardButton(text="📢 Эълон юбориш")],
             [KeyboardButton(text="⚙️ Тўлов созламалари")],
-            [KeyboardButton(text="⬅️ Орқага")],
+            [KeyboardButton(text="👮 Админлар")],
+        ])
+    keyboard.append([KeyboardButton(text="⬅️ Орқага")])
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+    )
+
+
+def admin_management_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📋 Админлар рўйхати")],
+            [KeyboardButton(text="➕ Админ қўшиш"), KeyboardButton(text="➖ Админни ўчириш")],
+            [KeyboardButton(text="🛠 Админ панел")],
         ],
         resize_keyboard=True,
     )
