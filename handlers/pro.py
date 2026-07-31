@@ -1090,7 +1090,7 @@ async def admin_user_remind_callback(callback: CallbackQuery, bot: Bot):
 
 @router.message(F.text.in_(SUBSCRIPTION_OFFER_ACTION_TEXTS))
 async def preview_subscription_offer(message: Message):
-    if not _is_owner(message):
+    if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
         return
     total = await count_users_by_subscription(active=False)
@@ -1106,7 +1106,7 @@ async def preview_subscription_offer(message: Message):
 
 @router.message(F.text.in_(SUBSCRIBER_THANKS_ACTION_TEXTS))
 async def preview_subscriber_thanks(message: Message):
-    if not _is_owner(message):
+    if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
         return
     total = await count_users_by_subscription(active=True)
@@ -1131,7 +1131,7 @@ async def cancel_audience_broadcast(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("audience_send:"))
 async def send_audience_broadcast(callback: CallbackQuery, bot: Bot):
-    if not _is_owner(callback):
+    if not _is_admin(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     target = callback.data.split(":", 1)[1]
