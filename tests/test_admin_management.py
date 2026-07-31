@@ -79,6 +79,39 @@ class AdminManagementTests(unittest.IsolatedAsyncioTestCase):
         save_config.assert_not_awaited()
         self.assertEqual(3, state.clear.await_count)
 
+    async def test_helper_admin_can_preview_and_send_safe_audience_messages(self):
+        helper_id = pro.ADMIN_ID + 1
+        pro._admin_ids.add(helper_id)
+        message = SimpleNamespace(
+            from_user=SimpleNamespace(id=helper_id),
+            answer=AsyncMock(),
+        )
+        callback = SimpleNamespace(
+            from_user=SimpleNamespace(id=helper_id),
+            data="audience_send:inactive",
+            answer=AsyncMock(),
+            message=SimpleNamespace(
+                edit_reply_markup=AsyncMock(),
+                answer=AsyncMock(),
+            ),
+        )
+        bot = SimpleNamespace(get_me=AsyncMock(return_value=SimpleNamespace(username="test_bot")))
+
+        try:
+            with (
+                patch.object(pro, "count_users_by_subscription", AsyncMock(return_value=0)),
+                patch.object(pro, "list_user_ids_by_subscription", AsyncMock(return_value=[])) as list_users,
+            ):
+                await pro.preview_subscription_offer(message)
+                await pro.preview_subscriber_thanks(message)
+                await pro.send_audience_broadcast(callback, bot)
+        finally:
+            pro._admin_ids.discard(helper_id)
+
+        self.assertEqual(2, message.answer.await_count)
+        list_users.assert_awaited_once_with(False)
+        callback.message.edit_reply_markup.assert_awaited_once_with(reply_markup=None)
+
 
 if __name__ == "__main__":
     unittest.main()
