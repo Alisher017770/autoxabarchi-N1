@@ -1,4 +1,6 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import delete, select
 
@@ -6,6 +8,7 @@ from db import async_session, init_db
 from keyboards import admin_menu_kb
 from models import BotAdmin, BotAdminAudit
 from repository import add_bot_admin, list_bot_admins, remove_bot_admin
+from handlers import pro
 
 
 class AdminManagementTests(unittest.IsolatedAsyncioTestCase):
@@ -42,6 +45,39 @@ class AdminManagementTests(unittest.IsolatedAsyncioTestCase):
     def test_owner_menu_contains_admin_management(self):
         labels = [button.text for row in admin_menu_kb(True).keyboard for button in row]
         self.assertIn("👮 Админлар", labels)
+
+
+    async def test_helper_admin_cannot_start_payment_setting_changes(self):
+        message = SimpleNamespace(
+            from_user=SimpleNamespace(id=pro.ADMIN_ID + 1),
+            answer=AsyncMock(),
+        )
+        state = SimpleNamespace(set_state=AsyncMock())
+
+        await pro.ask_admin_price(message, state)
+        await pro.ask_admin_card(message, state)
+        await pro.ask_admin_owner(message, state)
+
+        self.assertEqual(3, message.answer.await_count)
+        state.set_state.assert_not_awaited()
+
+    async def test_helper_admin_cannot_save_payment_setting_changes(self):
+        message = SimpleNamespace(
+            from_user=SimpleNamespace(id=pro.ADMIN_ID + 1),
+            text="999 999",
+        )
+        state = SimpleNamespace(clear=AsyncMock())
+
+        with (
+            patch.object(pro, "_cancel_admin_state", AsyncMock(return_value=False)),
+            patch.object(pro, "set_bot_config", AsyncMock()) as save_config,
+        ):
+            await pro.save_admin_price(message, state)
+            await pro.save_admin_card(message, state)
+            await pro.save_admin_owner(message, state)
+
+        save_config.assert_not_awaited()
+        self.assertEqual(3, state.clear.await_count)
 
 
 if __name__ == "__main__":
