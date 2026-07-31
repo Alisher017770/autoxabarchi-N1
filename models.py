@@ -118,6 +118,27 @@ class AdminAlert(Base):
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class BotAdmin(Base):
+    """Additional bot administrators. The owner remains configured by ADMIN_ID."""
+    __tablename__ = "bot_admins"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    added_by: Mapped[int] = mapped_column(BigInteger)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class BotAdminAudit(Base):
+    """Immutable history of administrator additions and removals."""
+    __tablename__ = "bot_admin_audit"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    target_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    action: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class PendingPayment(Base):
     __tablename__ = "pending_payments"
 

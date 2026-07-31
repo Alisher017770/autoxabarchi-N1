@@ -23,6 +23,7 @@ from config import (
 )
 from keyboards import (
     admin_audience_confirm_kb,
+    admin_management_kb,
     admin_menu_kb,
     admin_user_card_kb,
     admin_user_results_kb,
@@ -54,6 +55,7 @@ from keyboards import (
 )
 from repository import (
     activate_subscription,
+    add_bot_admin,
     add_group,
     create_pending_payment,
     count_users_by_subscription,
@@ -69,6 +71,7 @@ from repository import (
     get_user_account,
     has_active_subscription,
     list_expiring_user_summaries,
+    list_bot_admins,
     list_recent_admin_alerts,
     list_pending_payments,
     list_groups,
@@ -78,6 +81,7 @@ from repository import (
     list_user_ids_by_subscription,
     list_user_summaries,
     remove_group,
+    remove_bot_admin,
     revoke_subscription,
     search_users,
     set_bot_config,
@@ -117,6 +121,7 @@ SUBSCRIBER_THANKS_TEXT = (
     "Сизнинг ишончингиз биз учун муҳим!"
 )
 _audience_broadcasts_running: set[str] = set()
+_admin_ids: set[int] = {ADMIN_ID}
 
 ADMIN_USERS_TEXTS = {"👥 Фойдаланувчилар", "Фойдаланувчилар", "👥 Userlar", "Userlar"}
 SUBSCRIBED_USERS_TEXTS = {"✅ Обуна бўлганлар", "✅ Obuna bo'lganlar"}
@@ -132,6 +137,10 @@ EXPIRING_THREE_DAYS_TEXTS = {"3️⃣ 3 кун қолганлар", "3 кун қ
 FINANCE_TEXTS = {"💰 Ҳисоб-китоб", "Ҳисоб-китоб"}
 SERVER_COST_TEXTS = {"🧾 Сервер харажати", "Сервер харажати"}
 ADMIN_ERRORS_TEXTS = {"⚠️ Хатолар", "Хатолар"}
+ADMIN_MANAGEMENT_TEXTS = {"👮 Админлар", "Админлар"}
+ADMIN_ADD_TEXTS = {"➕ Админ қўшиш", "Админ қўшиш"}
+ADMIN_REMOVE_TEXTS = {"➖ Админни ўчириш", "Админни ўчириш"}
+ADMIN_LIST_TEXTS = {"📋 Админлар рўйхати", "Админлар рўйхати"}
 
 BACK_TEXTS = {"⬅️ Орқага", "Орқага", "⬅️ Orqaga", "Orqaga"}
 ADMIN_PANEL_TEXTS = {"🛠 Админ панел", "Админ панел", "🛠 Admin panel", "Admin panel"}
@@ -189,7 +198,33 @@ def _status_label(status: str) -> str:
 
 
 def _is_admin(message: Message | CallbackQuery) -> bool:
+    return bool(message.from_user and message.from_user.id in _admin_ids)
+
+
+def _is_owner(message: Message | CallbackQuery) -> bool:
     return bool(message.from_user and message.from_user.id == ADMIN_ID)
+
+
+def _admin_kb(message: Message | CallbackQuery):
+    return admin_menu_kb(_is_owner(message))
+
+
+async def load_admin_access() -> None:
+    admins = await list_bot_admins()
+    _admin_ids.clear()
+    _admin_ids.add(ADMIN_ID)
+    _admin_ids.update(admin.user_id for admin in admins)
+
+
+async def _notify_admins(bot: Bot, method: str, *args, **kwargs) -> int:
+    delivered = 0
+    for admin_id in sorted(_admin_ids):
+        try:
+            await getattr(bot, method)(admin_id, *args, **kwargs)
+            delivered += 1
+        except Exception:
+            logger.exception("Admin notification could not be delivered to %s", admin_id)
+    return delivered
 
 
 async def _main_kb(message: Message | CallbackQuery):
@@ -220,7 +255,15 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
         await _show_guide(message)
         return True
     if _is_admin(message):
-        if text in ADMIN_USERS_TEXTS:
+        if text in ADMIN_MANAGEMENT_TEXTS:
+            await show_admin_management(message)
+        elif text in ADMIN_LIST_TEXTS:
+            await show_admin_list(message)
+        elif text in ADMIN_ADD_TEXTS:
+            await ask_add_admin(message, state)
+        elif text in ADMIN_REMOVE_TEXTS:
+            await ask_remove_admin(message, state)
+        elif text in ADMIN_USERS_TEXTS:
             await admin_users(message)
         elif text in SUBSCRIBED_USERS_TEXTS:
             await admin_subscribed_users(message)
@@ -251,7 +294,7 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
         else:
             await message.answer(
                 "⚠️ Меню тугмаси хабар сифатида юборилмади. Керакли бўлимни қайта танланг.",
-                reply_markup=admin_menu_kb(),
+                reply_markup=_admin_kb(message),
             )
     else:
         await message.answer(
@@ -441,7 +484,137 @@ async def _show_admin_panel(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
         return
-    await message.answer("🛠 Админ панел\n\nКеракли бўлимни танланг.", reply_markup=admin_menu_kb())
+    role = "асосий эга" if _is_owner(message) else "ёрдамчи админ"
+    await message.answer(f"🛠 Админ панел\n\nҲуқуқ: {role}\nКеракли бўлимни танланг.", reply_markup=_admin_kb(message))
+
+
+async def _owner_required(message: Message | CallbackQuery) -> bool:
+    if _is_owner(message):
+        return True
+    if isinstance(message, CallbackQuery):
+        await message.answer("Бу амал фақат асосий эга учун.", show_alert=True)
+    else:
+        await message.answer("🔒 Бу амал фақат асосий эга учун.", reply_markup=_admin_kb(message))
+    return False
+
+
+async def _admin_list_text() -> str:
+    admins = await list_bot_admins()
+    lines = [f"👑 Асосий эга: <code>{ADMIN_ID}</code>"]
+    if admins:
+        lines.append("")
+        for index, admin in enumerate(admins, 1):
+            name = html.escape(admin.first_name or "Номи сақланмаган")
+            lines.append(f"{index}. 👮 {name} — <code>{admin.user_id}</code>")
+    else:
+        lines.append("\nҲозирча қўшимча админ йўқ.")
+    return "👮 <b>Админлар рўйхати</b>\n\n" + "\n".join(lines)
+
+
+@router.message(F.text.in_(ADMIN_MANAGEMENT_TEXTS))
+async def show_admin_management(message: Message):
+    if not await _owner_required(message):
+        return
+    await message.answer(await _admin_list_text(), parse_mode="HTML", reply_markup=admin_management_kb())
+
+
+@router.message(F.text.in_(ADMIN_LIST_TEXTS))
+async def show_admin_list(message: Message):
+    if not await _owner_required(message):
+        return
+    await message.answer(await _admin_list_text(), parse_mode="HTML", reply_markup=admin_management_kb())
+
+
+@router.message(F.text.in_(ADMIN_ADD_TEXTS))
+async def ask_add_admin(message: Message, state: FSMContext):
+    if not await _owner_required(message):
+        return
+    await state.set_state(AdStates.waiting_admin_add_id)
+    await message.answer(
+        "➕ Янги админнинг Telegram ID рақамини юборинг.\n\n"
+        "ID рақамини олиш учун у одам ботга камида бир марта /start босгани яхши.",
+        reply_markup=support_message_kb(),
+    )
+
+
+@router.message(AdStates.waiting_admin_add_id)
+async def receive_add_admin(message: Message, state: FSMContext, bot: Bot):
+    if _is_back_text(message):
+        await state.clear()
+        await show_admin_management(message)
+        return
+    if not await _owner_required(message):
+        await state.clear()
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        await message.answer("Telegram ID фақат рақамдан иборат бўлиши керак.")
+        return
+    user_id = int(raw)
+    if user_id == ADMIN_ID:
+        await message.answer("Бу ID асосий эганики ва аллақачон энг юқори ҳуқуққа эга.")
+        return
+    account = await get_user_account(user_id)
+    added = await add_bot_admin(user_id, ADMIN_ID, account.first_name if account else None)
+    if not added:
+        await message.answer("Бу фойдаланувчи аллақачон админ.", reply_markup=admin_management_kb())
+        await state.clear()
+        return
+    _admin_ids.add(user_id)
+    await state.clear()
+    try:
+        await bot.send_message(
+            user_id,
+            "✅ Сиз Авто хабарчи N1 ботга ёрдамчи админ қилиб қўшилдингиз.\n"
+            "Админ панелни очиш учун /admin ни босинг.",
+            reply_markup=admin_menu_kb(False),
+        )
+    except Exception:
+        logger.info("New admin %s has not started the bot yet", user_id)
+    await message.answer(f"✅ Админ қўшилди: <code>{user_id}</code>", parse_mode="HTML", reply_markup=admin_management_kb())
+
+
+@router.message(F.text.in_(ADMIN_REMOVE_TEXTS))
+async def ask_remove_admin(message: Message, state: FSMContext):
+    if not await _owner_required(message):
+        return
+    await state.set_state(AdStates.waiting_admin_remove_id)
+    await message.answer(
+        (await _admin_list_text()) + "\n\n➖ Ўчириладиган админ ID рақамини юборинг.",
+        parse_mode="HTML",
+        reply_markup=support_message_kb(),
+    )
+
+
+@router.message(AdStates.waiting_admin_remove_id)
+async def receive_remove_admin(message: Message, state: FSMContext, bot: Bot):
+    if _is_back_text(message):
+        await state.clear()
+        await show_admin_management(message)
+        return
+    if not await _owner_required(message):
+        await state.clear()
+        return
+    raw = (message.text or "").strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        await message.answer("Telegram ID фақат рақамдан иборат бўлиши керак.")
+        return
+    user_id = int(raw)
+    if user_id == ADMIN_ID:
+        await message.answer("❌ Асосий эгани ўчириб бўлмайди.")
+        return
+    removed = await remove_bot_admin(user_id, ADMIN_ID)
+    if not removed:
+        await message.answer("Бу ID қўшимча админлар рўйхатида йўқ.", reply_markup=admin_management_kb())
+        await state.clear()
+        return
+    _admin_ids.discard(user_id)
+    await state.clear()
+    try:
+        await bot.send_message(user_id, "ℹ️ Авто хабарчи N1 ботдаги ёрдамчи админ ҳуқуқингиз олиб ташланди.")
+    except Exception:
+        pass
+    await message.answer(f"✅ Админ ўчирилди: <code>{user_id}</code>", parse_mode="HTML", reply_markup=admin_management_kb())
 
 
 @router.message(Command("admin"))
@@ -468,20 +641,20 @@ async def admin_stats(message: Message):
         f"🎟 Актив обуналар: {stats['active_subs']}\n"
         f"💳 Кутилаётган тўловлар: {stats['pending_payments']}\n"
         f"✅ Тасдиқланган тўловлар: {stats['approved_payments']}",
-        reply_markup=admin_menu_kb(),
+        reply_markup=_admin_kb(message),
     )
 
 
 @router.message(F.text.in_(ADMIN_ERRORS_TEXTS))
 async def admin_errors(message: Message):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     alerts = await list_recent_admin_alerts(hours=72, limit=8)
     if not alerts:
         await message.answer(
             "✅ Охирги 72 соатда тизим хатоси қайд этилмаган.",
-            reply_markup=admin_menu_kb(),
+            reply_markup=_admin_kb(message),
         )
         return
     lines = ["⚠️ Охирги 72 соатдаги хатолар\n"]
@@ -492,7 +665,7 @@ async def admin_errors(message: Message):
             f"🔁 {alert.count} марта · 🕒 {alert.last_seen_at:%Y-%m-%d %H:%M}\n"
             f"{html.escape(alert.details[:300])}"
         )
-    await message.answer("\n\n".join(lines), reply_markup=admin_menu_kb())
+    await message.answer("\n\n".join(lines), reply_markup=_admin_kb(message))
 
 
 @router.error()
@@ -515,7 +688,7 @@ def _format_money(value: int) -> str:
 
 @router.message(F.text.in_(FINANCE_TEXTS))
 async def admin_finance(message: Message):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     report = await get_financial_summary()
@@ -543,7 +716,7 @@ async def admin_finance(message: Message):
 
 @router.message(F.text.in_(SERVER_COST_TEXTS))
 async def ask_admin_server_cost(message: Message, state: FSMContext):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     await state.set_state(AdStates.waiting_admin_server_cost)
@@ -554,7 +727,7 @@ async def ask_admin_server_cost(message: Message, state: FSMContext):
 async def save_admin_server_cost(message: Message, state: FSMContext):
     if await _cancel_admin_state(message, state):
         return
-    if not _is_admin(message):
+    if not _is_owner(message):
         await state.clear()
         return
     amount = parse_money_amount(message.text)
@@ -573,14 +746,14 @@ async def admin_payments(message: Message):
         return
     payments = await list_pending_payments()
     if not payments:
-        await message.answer("✅ Кутилаётган тўлов йўқ.", reply_markup=admin_menu_kb())
+        await message.answer("✅ Кутилаётган тўлов йўқ.", reply_markup=_admin_kb(message))
         return
     await message.answer("💳 Кутилаётган тўловлар:", reply_markup=pending_payments_kb(payments))
 
 
 @router.callback_query(F.data.startswith("payview:"))
 async def view_payment(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if not _is_admin(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     payment_id = int(callback.data.split(":")[1])
@@ -595,15 +768,15 @@ async def view_payment(callback: CallbackQuery):
         f"Ҳолат: {_status_label(payment.status)}"
     )
     if payment.file_type == "photo":
-        await callback.bot.send_photo(ADMIN_ID, payment.file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
+        await callback.bot.send_photo(callback.from_user.id, payment.file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
     else:
-        await callback.bot.send_document(ADMIN_ID, payment.file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
+        await callback.bot.send_document(callback.from_user.id, payment.file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
     await callback.answer("Юборилди")
 
 
 @router.message(F.text.in_({"📢 Эълон юбориш", "Эълон юбориш", "📢 E'lon yuborish", "E'lon yuborish"}))
 async def ask_admin_broadcast(message: Message, state: FSMContext):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     await state.set_state(AdStates.waiting_admin_broadcast)
@@ -614,7 +787,7 @@ async def ask_admin_broadcast(message: Message, state: FSMContext):
 async def send_admin_broadcast(message: Message, state: FSMContext, bot: Bot):
     if await _cancel_admin_state(message, state):
         return
-    if not _is_admin(message):
+    if not _is_owner(message):
         await state.clear()
         return
     text = message.html_text or message.text
@@ -630,7 +803,7 @@ async def send_admin_broadcast(message: Message, state: FSMContext, bot: Bot):
         except Exception:
             failed += 1
     await state.clear()
-    await message.answer(f"✅ Эълон юборилди.\n\nЮборилди: {sent}\nЕтиб бормади: {failed}", reply_markup=admin_menu_kb())
+    await message.answer(f"✅ Эълон юборилди.\n\nЮборилди: {sent}\nЕтиб бормади: {failed}", reply_markup=_admin_kb(message))
 
 
 @router.message(F.text.in_(ADMIN_USERS_TEXTS))
@@ -755,7 +928,7 @@ async def admin_user_card_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("userextend:"))
 async def admin_user_extend_callback(callback: CallbackQuery, bot: Bot):
-    if not _is_admin(callback):
+    if not _is_owner(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     _, user_id_text, days_text = callback.data.split(":")
@@ -774,7 +947,7 @@ async def admin_user_extend_callback(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data.startswith("userrevoke:"))
 async def admin_user_revoke_confirm(callback: CallbackQuery):
-    if not _is_admin(callback):
+    if not _is_owner(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     user_id = int(callback.data.split(":", 1)[1])
@@ -784,7 +957,7 @@ async def admin_user_revoke_confirm(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("userrevokeok:"))
 async def admin_user_revoke_callback(callback: CallbackQuery, bot: Bot):
-    if not _is_admin(callback):
+    if not _is_owner(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     user_id = int(callback.data.split(":", 1)[1])
@@ -917,7 +1090,7 @@ async def admin_user_remind_callback(callback: CallbackQuery, bot: Bot):
 
 @router.message(F.text.in_(SUBSCRIPTION_OFFER_ACTION_TEXTS))
 async def preview_subscription_offer(message: Message):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     total = await count_users_by_subscription(active=False)
@@ -933,7 +1106,7 @@ async def preview_subscription_offer(message: Message):
 
 @router.message(F.text.in_(SUBSCRIBER_THANKS_ACTION_TEXTS))
 async def preview_subscriber_thanks(message: Message):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     total = await count_users_by_subscription(active=True)
@@ -958,7 +1131,7 @@ async def cancel_audience_broadcast(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("audience_send:"))
 async def send_audience_broadcast(callback: CallbackQuery, bot: Bot):
-    if not _is_admin(callback):
+    if not _is_owner(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     target = callback.data.split(":", 1)[1]
@@ -1012,7 +1185,7 @@ async def send_audience_broadcast(callback: CallbackQuery, bot: Bot):
 
 @router.message(F.text.in_({"🎟 Обуна бериш", "Обуна бериш", "🎟 Obuna berish", "Obuna berish"}))
 async def ask_sub_user(message: Message, state: FSMContext):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     await state.set_state(AdStates.waiting_admin_sub_user)
@@ -1023,7 +1196,7 @@ async def ask_sub_user(message: Message, state: FSMContext):
 async def receive_sub_user(message: Message, state: FSMContext):
     if await _cancel_admin_state(message, state):
         return
-    if not _is_admin(message):
+    if not _is_owner(message):
         await state.clear()
         return
     user_id_text = re.sub(r"\D", "", message.text or "")
@@ -1039,7 +1212,7 @@ async def receive_sub_user(message: Message, state: FSMContext):
 async def receive_sub_days(message: Message, state: FSMContext, bot: Bot):
     if await _cancel_admin_state(message, state):
         return
-    if not _is_admin(message):
+    if not _is_owner(message):
         await state.clear()
         return
     days_text = re.sub(r"\D", "", message.text or "")
@@ -1065,12 +1238,12 @@ async def receive_sub_days(message: Message, state: FSMContext, bot: Bot):
         )
     except Exception:
         pass
-    await message.answer(f"✅ Обуна берилди.\n\nФойдаланувчи айди: {user_id}\nГача: {_format_until(until)}", reply_markup=admin_menu_kb())
+    await message.answer(f"✅ Обуна берилди.\n\nФойдаланувчи айди: {user_id}\nГача: {_format_until(until)}", reply_markup=_admin_kb(message))
 
 
 @router.message(F.text.in_({"🚫 Обунани ўчириш", "Обунани ўчириш", "🚫 Obunani o'chirish", "Obunani o'chirish"}))
 async def ask_revoke_sub_user(message: Message, state: FSMContext):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     await state.set_state(AdStates.waiting_admin_revoke_sub_user)
@@ -1081,7 +1254,7 @@ async def ask_revoke_sub_user(message: Message, state: FSMContext):
 async def receive_revoke_sub_user(message: Message, state: FSMContext, bot: Bot):
     if await _cancel_admin_state(message, state):
         return
-    if not _is_admin(message):
+    if not _is_owner(message):
         await state.clear()
         return
     user_id_text = re.sub(r"\D", "", message.text or "")
@@ -1109,13 +1282,13 @@ async def receive_revoke_sub_user(message: Message, state: FSMContext, bot: Bot)
         f"✅ Обуна ўчирилди.\n\n"
         f"Фойдаланувчи айди: {user_id}\n"
         f"Олдинги муддат: {old_text}",
-        reply_markup=admin_menu_kb(),
+        reply_markup=_admin_kb(message),
     )
 
 
 @router.message(F.text.in_({"⚙️ Тўлов созламалари", "Тўлов созламалари", "⚙️ To'lov sozlamalari", "To'lov sozlamalari"}))
 async def admin_payment_settings(message: Message):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     payment_config = await get_payment_config()
@@ -1130,7 +1303,7 @@ async def admin_payment_settings(message: Message):
 
 @router.message(F.text.in_({"📌 Нарх", "Нарх", "📌 Narx", "Narx"}))
 async def ask_admin_price(message: Message, state: FSMContext):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     await state.set_state(AdStates.waiting_admin_price)
@@ -1141,7 +1314,7 @@ async def ask_admin_price(message: Message, state: FSMContext):
 async def save_admin_price(message: Message, state: FSMContext):
     if await _cancel_admin_state(message, state):
         return
-    if not _is_admin(message):
+    if not _is_owner(message):
         await state.clear()
         return
     await set_bot_config("price", (message.text or "").strip())
@@ -1151,7 +1324,7 @@ async def save_admin_price(message: Message, state: FSMContext):
 
 @router.message(F.text.in_({"💳 Карта", "Карта", "💳 Karta", "Karta"}))
 async def ask_admin_card(message: Message, state: FSMContext):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     await state.set_state(AdStates.waiting_admin_card)
@@ -1162,7 +1335,7 @@ async def ask_admin_card(message: Message, state: FSMContext):
 async def save_admin_card(message: Message, state: FSMContext):
     if await _cancel_admin_state(message, state):
         return
-    if not _is_admin(message):
+    if not _is_owner(message):
         await state.clear()
         return
     await set_bot_config("card", (message.text or "").strip())
@@ -1172,7 +1345,7 @@ async def save_admin_card(message: Message, state: FSMContext):
 
 @router.message(F.text.in_({"👤 Карта эгаси", "Карта эгаси", "👤 Karta egasi", "Karta egasi"}))
 async def ask_admin_owner(message: Message, state: FSMContext):
-    if not _is_admin(message):
+    if not _is_owner(message):
         await message.answer("Рухсат йўқ.")
         return
     await state.set_state(AdStates.waiting_admin_owner)
@@ -1183,7 +1356,7 @@ async def ask_admin_owner(message: Message, state: FSMContext):
 async def save_admin_owner(message: Message, state: FSMContext):
     if await _cancel_admin_state(message, state):
         return
-    if not _is_admin(message):
+    if not _is_owner(message):
         await state.clear()
         return
     await set_bot_config("owner", (message.text or "").strip())
@@ -1254,7 +1427,7 @@ async def pending_payment_button(message: Message, state: FSMContext):
 @router.message(F.text.in_(SUPPORT_TEXTS))
 async def ask_support_message(message: Message, state: FSMContext):
     if _is_admin(message):
-        await message.answer("Сиз админсиз.", reply_markup=admin_menu_kb())
+        await message.answer("Сиз админсиз.", reply_markup=_admin_kb(message))
         return
     await state.set_state(AdStates.waiting_support_message)
     await message.answer(
@@ -1290,17 +1463,22 @@ async def receive_support_message(message: Message, state: FSMContext, bot: Bot)
 
     user = message.from_user
     username = f"@{user.username}" if user.username else "йўқ"
-    try:
-        await bot.send_message(
-            ADMIN_ID,
-            "🆘 Янги ёрдам сўрови\n\n"
-            f"Фойдаланувчи: {user.full_name}\n"
-            f"Username: {username}\n"
-            f"ID: {user.id}",
-            reply_markup=support_admin_kb(user.id),
-        )
-        await message.copy_to(ADMIN_ID)
-    except Exception:
+    delivered = 0
+    for admin_id in sorted(_admin_ids):
+        try:
+            await bot.send_message(
+                admin_id,
+                "🆘 Янги ёрдам сўрови\n\n"
+                f"Фойдаланувчи: {user.full_name}\n"
+                f"Username: {username}\n"
+                f"ID: {user.id}",
+                reply_markup=support_admin_kb(user.id),
+            )
+            await message.copy_to(admin_id)
+            delivered += 1
+        except Exception:
+            logger.exception("[%s] support message could not be delivered to admin %s", user.id, admin_id)
+    if not delivered:
         logger.exception("[%s] support message could not be delivered to admin", user.id)
         await message.answer(
             "❌ Хабар админга етказилмади. Бироздан кейин қайта уриниб кўринг.",
@@ -1318,7 +1496,7 @@ async def receive_support_message(message: Message, state: FSMContext, bot: Bot)
 
 @router.callback_query(F.data.startswith("supportreply:"))
 async def ask_support_reply(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if not _is_admin(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     user_id = int(callback.data.split(":", 1)[1])
@@ -1354,7 +1532,7 @@ async def receive_support_reply(message: Message, state: FSMContext, bot: Bot):
         return
 
     await state.clear()
-    await message.answer(f"✅ Жавоб юборилди.\nФойдаланувчи ID: {user_id}", reply_markup=admin_menu_kb())
+    await message.answer(f"✅ Жавоб юборилди.\nФойдаланувчи ID: {user_id}", reply_markup=_admin_kb(message))
 
 
 def _qr_image(url: str) -> BufferedInputFile:
@@ -1644,7 +1822,7 @@ async def add_group_cb(callback: CallbackQuery):
     await callback.message.answer(
         f"✅ {len(groups)} та гуруҳ сақланди.\n\n"
         "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
-        reply_markup=main_menu_kb(callback.from_user.id == ADMIN_ID, True, True),
+        reply_markup=main_menu_kb(_is_admin(callback), True, True),
     )
 
 
@@ -1664,7 +1842,7 @@ async def add_all_groups_cb(callback: CallbackQuery):
     await callback.message.answer(
         f"✅ {added_count} та янги гуруҳ қўшилди. Жами: {len(groups)} та.\n\n"
         "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
-        reply_markup=main_menu_kb(callback.from_user.id == ADMIN_ID, True, True),
+        reply_markup=main_menu_kb(_is_admin(callback), True, True),
     )
     await callback.answer("Қўшилди")
 
@@ -1903,15 +2081,10 @@ async def _accept_payment_receipt(
         f"Айди: {message.from_user.id}\n"
         f"Тўлов айди: {payment.id}"
     )
-    delivered = True
-    try:
-        if file_type == "photo":
-            await bot.send_photo(ADMIN_ID, file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
-        else:
-            await bot.send_document(ADMIN_ID, file_id, caption=caption, reply_markup=payment_admin_kb(payment.id))
-    except Exception:
-        delivered = False
-        logger.exception("Payment #%s could not be delivered to admin %s", payment.id, ADMIN_ID)
+    if file_type == "photo":
+        delivered = bool(await _notify_admins(bot, "send_photo", file_id, caption=caption, reply_markup=payment_admin_kb(payment.id)))
+    else:
+        delivered = bool(await _notify_admins(bot, "send_document", file_id, caption=caption, reply_markup=payment_admin_kb(payment.id)))
 
     await state.clear()
     if delivered:
@@ -1939,7 +2112,7 @@ async def receive_payment_without_state(message: Message, state: FSMContext, bot
 
 @router.callback_query(F.data.startswith("payok:"))
 async def approve_payment(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if not _is_admin(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     payment_id = int(callback.data.split(":")[1])
@@ -1967,7 +2140,7 @@ async def approve_payment(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("payno:"))
 async def reject_payment(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if not _is_admin(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     payment_id = int(callback.data.split(":")[1])
@@ -1997,7 +2170,7 @@ async def receive_reject_reason(message: Message, state: FSMContext, bot: Bot):
     payment = await get_pending_payment(payment_id)
     if not payment or payment.status != "pending":
         await state.clear()
-        await message.answer("Бу чек аллақачон кўрилган.", reply_markup=admin_menu_kb())
+        await message.answer("Бу чек аллақачон кўрилган.", reply_markup=_admin_kb(message))
         return
     await set_payment_status(payment_id, "rejected")
     await bot.send_message(
@@ -2008,7 +2181,7 @@ async def receive_reject_reason(message: Message, state: FSMContext, bot: Bot):
         reply_markup=main_menu_kb(False, True, False),
     )
     await state.clear()
-    await message.answer("✅ Тўлов рад этилди ва сабаб фойдаланувчига юборилди.", reply_markup=admin_menu_kb())
+    await message.answer("✅ Тўлов рад этилди ва сабаб фойдаланувчига юборилди.", reply_markup=_admin_kb(message))
 
 
 @router.message()

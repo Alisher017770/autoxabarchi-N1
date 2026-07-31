@@ -10,6 +10,7 @@ from config import BOT_BRAND, BOT_TOKEN, BROADCAST_WORKER_ENABLED, validate_conf
 from broadcaster import configure_broadcaster_bot, resume_running_profiles, shutdown_broadcaster
 from db import init_db
 from handlers import router as main_router
+from handlers.pro import load_admin_access
 from keyboards import RESERVED_MESSAGE_TEXTS
 from repository import clear_reserved_message_texts
 from subscription_monitor import subscription_monitor
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 async def main():
     validate_config()
     await init_db()
+    await load_admin_access()
     cleared_messages = await clear_reserved_message_texts(RESERVED_MESSAGE_TEXTS)
     if cleared_messages:
         logger.warning("%s ta menyu matni xabar sozlamasidan tozalandi", cleared_messages)
