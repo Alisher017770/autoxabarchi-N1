@@ -333,7 +333,7 @@ def subscription_offer_kb(bot_username: str) -> InlineKeyboardMarkup:
 
 def subscriber_thanks_kb(bot_username: str) -> InlineKeyboardMarkup:
     bot_url = f"https://t.me/{bot_username}"
-    share_text = quote("Авто Хабарчи N1 — гуруҳларга автоматик хабар юбориш учун қулай бот.")
+    share_text = quote("XabarFlow — гуруҳларга автоматик хабар юбориш учун қулай бот.")
     kb = InlineKeyboardBuilder()
     kb.button(text="📤 Дўстларга улашиш", url=f"https://t.me/share/url?url={quote(bot_url)}&text={share_text}")
     return kb.as_markup()

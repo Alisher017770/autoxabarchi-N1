@@ -45,9 +45,9 @@ BROADCAST_WORKER_ENABLED = os.getenv("BROADCAST_WORKER_ENABLED", "true").strip()
 BROADCAST_WORKER_POLL_SECONDS = max(0.2, float(os.getenv("BROADCAST_WORKER_POLL_SECONDS", "1")))
 BROADCAST_LEASE_SECONDS = max(60, int(os.getenv("BROADCAST_LEASE_SECONDS", "180")))
 SUBSCRIPTION_DAYS = int(os.getenv("SUBSCRIPTION_DAYS", "30"))
-BOT_BRAND = os.getenv("BOT_BRAND", "Авто хабарчи N1 бот")
-if BOT_BRAND == "Auto xabarchi N1 bot":
-    BOT_BRAND = "Авто хабарчи N1 бот"
+BOT_BRAND = os.getenv("BOT_BRAND", "XabarFlow | Авто хабарчи").strip()
+if BOT_BRAND in {"Auto xabarchi N1 bot", "Авто хабарчи N1 бот", "Авто хабарчи N1"}:
+    BOT_BRAND = "XabarFlow | Авто хабарчи"
 SUBSCRIPTION_PRICE = os.getenv("SUBSCRIPTION_PRICE", "30 000 сўм")
 PAYMENT_CARD = os.getenv("PAYMENT_CARD", "5614 6824 1042 4388")
 PAYMENT_OWNER = os.getenv("PAYMENT_OWNER", "R.M")
