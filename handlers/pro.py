@@ -354,7 +354,7 @@ async def _show_home(message: Message):
 
 async def _show_guide(message: Message):
     await message.answer(
-        "📹 <b>Авто хабарчи N1 — фойдаланиш қўлланмаси</b>\n\n"
+        "📹 <b>XabarFlow — фойдаланиш қўлланмаси</b>\n\n"
         "Қисқа ва батафсил видеоларда профилни улашдан бошлаб, "
         "автоматик хабар юборишни ишга туширишгача кўрсатилган.\n\n"
         "⚠️ QR-кодингизни ҳеч кимга юборманг.",
@@ -565,7 +565,7 @@ async def receive_add_admin(message: Message, state: FSMContext, bot: Bot):
     try:
         await bot.send_message(
             user_id,
-            "✅ Сиз Авто хабарчи N1 ботга ёрдамчи админ қилиб қўшилдингиз.\n"
+            "✅ Сиз XabarFlow ботига ёрдамчи админ қилиб қўшилдингиз.\n"
             "Админ панелни очиш учун /admin ни босинг.",
             reply_markup=admin_menu_kb(False),
         )
@@ -611,7 +611,7 @@ async def receive_remove_admin(message: Message, state: FSMContext, bot: Bot):
     _admin_ids.discard(user_id)
     await state.clear()
     try:
-        await bot.send_message(user_id, "ℹ️ Авто хабарчи N1 ботдаги ёрдамчи админ ҳуқуқингиз олиб ташланди.")
+        await bot.send_message(user_id, "ℹ️ XabarFlow ботидаги ёрдамчи админ ҳуқуқингиз олиб ташланди.")
     except Exception:
         pass
     await message.answer(f"✅ Админ ўчирилди: <code>{user_id}</code>", parse_mode="HTML", reply_markup=admin_management_kb())
