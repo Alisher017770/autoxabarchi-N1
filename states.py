@@ -16,6 +16,7 @@ class AdStates(StatesGroup):
     waiting_admin_card = State()
     waiting_admin_owner = State()
     waiting_admin_server_cost = State()
+    waiting_admin_railway_billing = State()
     waiting_payment_reject_reason = State()
     waiting_admin_user_search = State()
     waiting_support_message = State()

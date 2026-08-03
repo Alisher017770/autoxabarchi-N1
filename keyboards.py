@@ -31,6 +31,7 @@ RESERVED_MESSAGE_TEXTS = {
     "📊 Статистика", "Статистика",
     "⚠️ Хатолар", "Хатолар",
     "💰 Ҳисоб-китоб", "Ҳисоб-китоб", "🧾 Сервер харажати", "Сервер харажати",
+    "🚂 Railway ҳисоби", "Railway ҳисоби", "✏️ Railway ни созлаш", "Railway ни созлаш",
     "👥 Фойдаланувчилар", "Фойдаланувчилар", "👥 Userlar", "Userlar",
     "💳 Тўловлар", "Тўловлар",
     "🎟 Обуна бериш", "Обуна бериш",
@@ -247,6 +248,8 @@ def admin_management_kb() -> ReplyKeyboardMarkup:
 def finance_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="🚂 Railway ҳисоби")],
+            [KeyboardButton(text="✏️ Railway ни созлаш")],
             [KeyboardButton(text="🧾 Сервер харажати")],
             [KeyboardButton(text="🛠 Админ панел")],
         ],
