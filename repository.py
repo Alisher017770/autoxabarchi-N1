@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta
+from calendar import monthrange
+from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select, delete, exists, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
@@ -987,6 +989,75 @@ async def get_financial_summary() -> dict:
             "approved_exact": int(approved_exact),
             "approved_unknown": int(approved_unknown),
         }
+
+
+def _parse_usd_amount(value: str | None) -> Decimal:
+    try:
+        parsed = Decimal(str(value or "0").replace(",", ".")).quantize(Decimal("0.01"))
+        return max(parsed, Decimal("0.00"))
+    except (InvalidOperation, ValueError):
+        return Decimal("0.00")
+
+
+def _next_month_same_day(value: date) -> date:
+    year = value.year + (1 if value.month == 12 else 0)
+    month = 1 if value.month == 12 else value.month + 1
+    return date(year, month, min(value.day, monthrange(year, month)[1]))
+
+
+async def get_railway_billing_status(today: date | None = None) -> dict:
+    """Return the owner-managed Railway billing snapshot used for reminders."""
+    today = today or datetime.utcnow().date()
+    keys = {
+        "railway_due_date",
+        "railway_estimated_usd",
+        "railway_credit_usd",
+        "railway_last_notified_due_date",
+    }
+    async with async_session() as session:
+        result = await session.execute(select(BotConfig).where(BotConfig.key.in_(keys)))
+        values = {item.key: item.value for item in result.scalars().all()}
+
+    try:
+        due_date = date.fromisoformat(values.get("railway_due_date", ""))
+    except ValueError:
+        due_date = None
+    if due_date:
+        while due_date < today:
+            due_date = _next_month_same_day(due_date)
+
+    estimated = _parse_usd_amount(values.get("railway_estimated_usd"))
+    credit = _parse_usd_amount(values.get("railway_credit_usd"))
+    payable = max(estimated - credit, Decimal("0.00"))
+    return {
+        "configured": due_date is not None,
+        "due_date": due_date,
+        "days_left": (due_date - today).days if due_date else None,
+        "estimated_usd": estimated,
+        "credit_usd": credit,
+        "payable_usd": payable,
+        "last_notified_due_date": values.get("railway_last_notified_due_date"),
+    }
+
+
+async def set_railway_billing_config(due_date: date, estimated_usd: Decimal, credit_usd: Decimal) -> None:
+    values = {
+        "railway_due_date": due_date.isoformat(),
+        "railway_estimated_usd": str(max(estimated_usd, Decimal("0")).quantize(Decimal("0.01"))),
+        "railway_credit_usd": str(max(credit_usd, Decimal("0")).quantize(Decimal("0.01"))),
+    }
+    async with async_session() as session:
+        for key, value in values.items():
+            item = await session.get(BotConfig, key)
+            if item is None:
+                session.add(BotConfig(key=key, value=value))
+            else:
+                item.value = value
+        await session.commit()
+
+
+async def mark_railway_billing_notified(due_date: date) -> None:
+    await set_bot_config("railway_last_notified_due_date", due_date.isoformat())
 
 
 async def list_pending_payments(limit: int = 10) -> list[PendingPayment]:

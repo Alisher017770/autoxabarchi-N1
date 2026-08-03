@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 import html
 from io import BytesIO
 import logging
@@ -65,6 +66,7 @@ from repository import (
     get_admin_user_card,
     get_broadcast_issue,
     get_payment_config,
+    get_railway_billing_status,
     get_pending_payment,
     get_latest_pending_payment_for_user,
     get_settings,
@@ -88,6 +90,7 @@ from repository import (
     set_interval,
     set_message_text,
     set_payment_status,
+    set_railway_billing_config,
     parse_money_amount,
     subscription_until,
     user_profile_key,
@@ -136,6 +139,8 @@ EXPIRING_ONE_DAY_TEXTS = {"1️⃣ 1 кун қолганлар", "1 кун қо�
 EXPIRING_THREE_DAYS_TEXTS = {"3️⃣ 3 кун қолганлар", "3 кун қолганлар"}
 FINANCE_TEXTS = {"💰 Ҳисоб-китоб", "Ҳисоб-китоб"}
 SERVER_COST_TEXTS = {"🧾 Сервер харажати", "Сервер харажати"}
+RAILWAY_BILLING_TEXTS = {"🚂 Railway ҳисоби", "Railway ҳисоби"}
+RAILWAY_BILLING_SET_TEXTS = {"✏️ Railway ни созлаш", "Railway ни созлаш"}
 ADMIN_ERRORS_TEXTS = {"⚠️ Хатолар", "Хатолар"}
 ADMIN_MANAGEMENT_TEXTS = {"👮 Админлар", "Админлар"}
 ADMIN_ADD_TEXTS = {"➕ Админ қўшиш", "Админ қўшиш"}
@@ -289,6 +294,10 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
             await admin_finance(message)
         elif text in SERVER_COST_TEXTS:
             await ask_admin_server_cost(message, state)
+        elif text in RAILWAY_BILLING_TEXTS:
+            await admin_railway_billing(message)
+        elif text in RAILWAY_BILLING_SET_TEXTS:
+            await ask_admin_railway_billing(message, state)
         elif text in ADMIN_ERRORS_TEXTS:
             await admin_errors(message)
         else:
@@ -712,6 +721,69 @@ async def admin_finance(message: Message):
         f"{unknown_note}",
         reply_markup=finance_kb(),
     )
+
+
+@router.message(F.text.in_(RAILWAY_BILLING_TEXTS))
+async def admin_railway_billing(message: Message):
+    if not _is_owner(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    status = await get_railway_billing_status()
+    if not status["configured"]:
+        await message.answer(
+            "🚂 Railway ҳисоби ҳали созланмаган.\n\n"
+            "«✏️ Railway ни созлаш» тугмасини босинг.",
+            reply_markup=finance_kb(),
+        )
+        return
+    await message.answer(
+        "🚂 Railway ҳисоби\n\n"
+        f"📅 Кейинги тўлов: {status['due_date']:%Y-%m-%d}\n"
+        f"⏳ Қолди: {status['days_left']} кун\n"
+        f"💵 Тахминий ҳисоб: ${status['estimated_usd']:.2f}\n"
+        f"🎁 Кредит қолдиғи: ${status['credit_usd']:.2f}\n"
+        f"💳 Тайёрлаш керак: ${status['payable_usd']:.2f}\n\n"
+        "🔔 Тўловга 3 кун қолганда фақат бош админга хабар келади.",
+        reply_markup=finance_kb(),
+    )
+
+
+@router.message(F.text.in_(RAILWAY_BILLING_SET_TEXTS))
+async def ask_admin_railway_billing(message: Message, state: FSMContext):
+    if not _is_owner(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await state.set_state(AdStates.waiting_admin_railway_billing)
+    await message.answer(
+        "Қуйидаги шаклда юборинг:\n"
+        "САНА | ТАХМИНИЙ ҲИСОБ | КРЕДИТ ҚОЛДИҒИ\n\n"
+        "Масалан: 2026-08-21 | 5.00 | 0.00\n"
+        "Суммалар АҚШ долларида.",
+    )
+
+
+@router.message(AdStates.waiting_admin_railway_billing)
+async def save_admin_railway_billing(message: Message, state: FSMContext):
+    if await _cancel_admin_state(message, state):
+        return
+    if not _is_owner(message):
+        await state.clear()
+        return
+    parts = [part.strip() for part in (message.text or "").split("|")]
+    try:
+        if len(parts) != 3:
+            raise ValueError
+        due_date = date.fromisoformat(parts[0])
+        estimated = Decimal(parts[1].replace(",", "."))
+        credit = Decimal(parts[2].replace(",", "."))
+        if due_date < datetime.utcnow().date() or estimated < 0 or credit < 0:
+            raise ValueError
+    except (ValueError, InvalidOperation):
+        await message.answer("Формат нотўғри. Масалан: 2026-08-21 | 5.00 | 0.00")
+        return
+    await set_railway_billing_config(due_date, estimated, credit)
+    await state.clear()
+    await message.answer("✅ Railway ҳисоб маълумоти сақланди.", reply_markup=finance_kb())
 
 
 @router.message(F.text.in_(SERVER_COST_TEXTS))

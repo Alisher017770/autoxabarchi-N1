@@ -1,5 +1,6 @@
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from unittest.mock import patch
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -77,6 +78,18 @@ class FinanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("approved", saved.status)
         self.assertEqual(25000, saved.amount)
         self.assertIsNotNone(saved.approved_at)
+
+    async def test_railway_billing_calculates_due_amount_and_rolls_month(self):
+        await repository.set_railway_billing_config(
+            date(2026, 8, 5), Decimal("8.40"), Decimal("1.25")
+        )
+
+        status = await repository.get_railway_billing_status(today=date(2026, 8, 2))
+        self.assertEqual(3, status["days_left"])
+        self.assertEqual(Decimal("7.15"), status["payable_usd"])
+
+        rolled = await repository.get_railway_billing_status(today=date(2026, 8, 6))
+        self.assertEqual(date(2026, 9, 5), rolled["due_date"])
 
 
 if __name__ == "__main__":
