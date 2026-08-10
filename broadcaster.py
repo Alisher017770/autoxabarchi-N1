@@ -34,6 +34,7 @@ from config import (
 from repository import (
     clear_broadcast_issue,
     clear_group_cooldown,
+    clear_profile_group_cooldowns,
     claim_due_broadcast_jobs,
     complete_broadcast_job,
     get_broadcast_issue,
@@ -280,13 +281,39 @@ def _next_cycle_run_at(
     retry_after_seconds: int,
     *,
     now: datetime | None = None,
+    group_next_send_at: datetime | None = None,
 ) -> datetime:
-    """Keep start-to-start cadence instead of adding work time to each cycle."""
+    """Wake for the earliest group while preserving profile-wide flood waits."""
     now = now or datetime.utcnow()
     anchor = cycle_started_at or now
     cadence_at = anchor + timedelta(minutes=interval_minutes)
     retry_at = now + timedelta(seconds=retry_after_seconds)
-    return max(now, cadence_at, retry_at)
+    scheduled_at = group_next_send_at or cadence_at
+    return max(now, scheduled_at, retry_at)
+
+
+def _group_due_after_success(
+    sent_at: datetime,
+    last_success_at: datetime | None,
+    interval_minutes: int,
+    previous_due_at: datetime | None,
+) -> datetime:
+    """Preserve learned slow mode without inflating it after a delayed cycle."""
+    interval_seconds = interval_minutes * 60
+    if last_success_at is not None and previous_due_at is not None:
+        learned_seconds = int((previous_due_at - last_success_at).total_seconds())
+        interval_seconds = max(interval_seconds, learned_seconds)
+    return sent_at + timedelta(seconds=interval_seconds)
+
+
+def _earliest_group_due_at(groups, cooldowns: dict[int, datetime]) -> datetime | None:
+    active_group_ids = {group.chat_id for group in groups}
+    due_times = [
+        due_at
+        for chat_id, due_at in cooldowns.items()
+        if chat_id in active_group_ids
+    ]
+    return min(due_times) if due_times else None
 
 
 async def _send_cycle(
@@ -311,6 +338,11 @@ async def _send_cycle(
     retry_after_seconds = 0
     can_continue = True
     client = None
+
+    async def defer_group(chat_id: int) -> None:
+        next_send_at = datetime.utcnow() + timedelta(minutes=interval_minutes)
+        await set_group_cooldown(profile, chat_id, next_send_at)
+        cooldowns[chat_id] = next_send_at
 
     async with _broadcast_slots:
         try:
@@ -366,11 +398,17 @@ async def _send_cycle(
                     await client.send_message(target, text, parse_mode="html")
                     sent_count += 1
                     await mark_group_success(profile, group.chat_id)
+                    sent_at = datetime.utcnow()
+                    group_due_at = _group_due_after_success(
+                        sent_at,
+                        last_success_at,
+                        interval_minutes,
+                        slow_mode_until,
+                    )
+                    await set_group_cooldown(profile, group.chat_id, group_due_at)
+                    cooldowns[group.chat_id] = group_due_at
                     if success_times is not None:
-                        success_times[group.chat_id] = datetime.utcnow()
-                    if slow_mode_until:
-                        await clear_group_cooldown(profile, group.chat_id)
-                        cooldowns.pop(group.chat_id, None)
+                        success_times[group.chat_id] = sent_at
                 except (PeerFloodError, UserRestrictedError) as exc:
                     await _stop_spam_restricted_profile(profile, exc)
                     can_continue = False
@@ -387,6 +425,7 @@ async def _send_cycle(
                 except SlowModeWaitError as exc:
                     next_send_at = datetime.utcnow() + timedelta(seconds=exc.seconds)
                     await set_group_cooldown(profile, group.chat_id, next_send_at)
+                    cooldowns[group.chat_id] = next_send_at
                     await set_broadcast_issue(
                         profile,
                         "slow_mode",
@@ -395,6 +434,7 @@ async def _send_cycle(
                     logger.warning("[%s] %s guruhida sekin rejim: %ss", profile, group.title, exc.seconds)
                 except (ChatWriteForbiddenError, UserBannedInChannelError):
                     write_forbidden_count += 1
+                    await defer_group(group.chat_id)
                     await set_broadcast_issue(
                         profile,
                         "write_forbidden",
@@ -408,6 +448,7 @@ async def _send_cycle(
                         break
                     if _is_write_forbidden_error(exc):
                         write_forbidden_count += 1
+                        await defer_group(group.chat_id)
                         await set_broadcast_issue(
                             profile,
                             "write_forbidden",
@@ -421,6 +462,7 @@ async def _send_cycle(
                             break
                         continue
                     await set_broadcast_issue(profile, "send_error", f"«{group.title}»: {exc}")
+                    await defer_group(group.chat_id)
                     logger.exception("[%s] xato (%s)", profile, group.title)
                 next_rest_at, can_continue = await _limited_sleep(profile, 2, started_at, next_rest_at)
                 if not can_continue:
@@ -472,6 +514,7 @@ async def _process_broadcast_job(job) -> None:
             return
 
         if now >= job.next_rest_at:
+            await clear_profile_group_cooldowns(profile)
             await complete_broadcast_job(
                 profile,
                 _worker_owner,
@@ -496,6 +539,7 @@ async def _process_broadcast_job(job) -> None:
             return
 
         groups = await list_groups(profile)
+        cooldowns: dict[int, datetime] = {}
         retry_after_seconds = 0
         can_continue = True
         if groups:
@@ -545,6 +589,7 @@ async def _process_broadcast_job(job) -> None:
                 job.cycle_started_at,
                 settings.interval_minutes,
                 retry_after_seconds,
+                group_next_send_at=_earliest_group_due_at(groups, cooldowns),
             ),
         )
     except asyncio.CancelledError:
