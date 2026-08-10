@@ -260,6 +260,35 @@ async def _limited_sleep(profile: str, seconds: float, started_at: float, next_r
         await asyncio.sleep(max(1, min(60, end_at - now, next_rest_at - now, (started_at + MAX_RUN_SECONDS) - now)))
 
 
+def _group_next_send_at(
+    last_success_at: datetime | None,
+    interval_minutes: int,
+    slow_mode_until: datetime | None,
+) -> datetime | None:
+    """Return the strictest per-group send boundary we currently know."""
+    boundaries = []
+    if last_success_at is not None:
+        boundaries.append(last_success_at + timedelta(minutes=interval_minutes))
+    if slow_mode_until is not None:
+        boundaries.append(slow_mode_until)
+    return max(boundaries) if boundaries else None
+
+
+def _next_cycle_run_at(
+    cycle_started_at: datetime | None,
+    interval_minutes: int,
+    retry_after_seconds: int,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Keep start-to-start cadence instead of adding work time to each cycle."""
+    now = now or datetime.utcnow()
+    anchor = cycle_started_at or now
+    cadence_at = anchor + timedelta(minutes=interval_minutes)
+    retry_at = now + timedelta(seconds=retry_after_seconds)
+    return max(now, cadence_at, retry_at)
+
+
 async def _send_cycle(
     profile: str,
     user_id: int,
@@ -273,6 +302,7 @@ async def _send_cycle(
     success_times: dict[int, datetime] | None = None,
     lease_guard: Callable[[], Awaitable[bool]] | None = None,
     peer_targets: dict[int, tuple[str, int | None]] | None = None,
+    interval_minutes: int = 15,
 ) -> tuple[float, bool, int, int, int, int]:
     """Send one profile cycle while bounding global Telegram connections."""
     attempted_count = 0
@@ -310,11 +340,21 @@ async def _send_cycle(
                     logger.info("[%s] worker ijarasi tugadi yoki foydalanuvchi to'xtatdi", profile)
                     can_continue = False
                     break
-                next_send_at = cooldowns.get(group.chat_id)
+                slow_mode_until = cooldowns.get(group.chat_id)
+                last_success_at = (
+                    success_times.get(group.chat_id)
+                    if success_times is not None
+                    else None
+                )
+                next_send_at = _group_next_send_at(
+                    last_success_at,
+                    interval_minutes,
+                    slow_mode_until,
+                )
                 if next_send_at and next_send_at > datetime.utcnow():
                     remaining = max(1, int((next_send_at - datetime.utcnow()).total_seconds()))
                     logger.info(
-                        "[%s] %s guruhida slow mode, yana %ss dan keyin uriniladi",
+                        "[%s] %s guruhining alohida vaqti, yana %ss dan keyin uriniladi",
                         profile,
                         group.title,
                         remaining,
@@ -328,8 +368,9 @@ async def _send_cycle(
                     await mark_group_success(profile, group.chat_id)
                     if success_times is not None:
                         success_times[group.chat_id] = datetime.utcnow()
-                    if next_send_at:
+                    if slow_mode_until:
                         await clear_group_cooldown(profile, group.chat_id)
+                        cooldowns.pop(group.chat_id, None)
                 except (PeerFloodError, UserRestrictedError) as exc:
                     await _stop_spam_restricted_profile(profile, exc)
                     can_continue = False
@@ -481,6 +522,7 @@ async def _process_broadcast_job(job) -> None:
                 success_times=success_times,
                 lease_guard=lease_guard,
                 peer_targets=peer_targets,
+                interval_minutes=settings.interval_minutes,
             )
             if can_continue and _all_attempts_write_forbidden(
                 attempted_count,
@@ -499,8 +541,10 @@ async def _process_broadcast_job(job) -> None:
             profile,
             _worker_owner,
             generation,
-            next_run_at=datetime.utcnow() + timedelta(
-                seconds=max(settings.interval_minutes * 60, retry_after_seconds)
+            next_run_at=_next_cycle_run_at(
+                job.cycle_started_at,
+                settings.interval_minutes,
+                retry_after_seconds,
             ),
         )
     except asyncio.CancelledError:
