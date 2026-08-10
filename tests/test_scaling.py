@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +10,50 @@ from telethon.tl.types import InputPeerChannel
 
 
 class ScalingTests(unittest.IsolatedAsyncioTestCase):
+    def test_group_schedule_uses_last_success_and_slow_mode_independently(self):
+        now = datetime.utcnow()
+
+        self.assertEqual(
+            now + timedelta(minutes=10),
+            broadcaster._group_next_send_at(now, 10, None),
+        )
+        self.assertEqual(
+            now + timedelta(minutes=15),
+            broadcaster._group_next_send_at(
+                now,
+                10,
+                now + timedelta(minutes=15),
+            ),
+        )
+
+    def test_next_cycle_keeps_start_to_start_interval(self):
+        started_at = datetime.utcnow()
+        finished_at = started_at + timedelta(minutes=2)
+
+        self.assertEqual(
+            started_at + timedelta(minutes=10),
+            broadcaster._next_cycle_run_at(
+                started_at,
+                10,
+                0,
+                now=finished_at,
+            ),
+        )
+
+    def test_flood_wait_is_counted_from_cycle_finish(self):
+        started_at = datetime.utcnow()
+        finished_at = started_at + timedelta(minutes=2)
+
+        self.assertEqual(
+            finished_at + timedelta(minutes=15),
+            broadcaster._next_cycle_run_at(
+                started_at,
+                10,
+                15 * 60,
+                now=finished_at,
+            ),
+        )
+
     def test_stored_channel_peer_can_be_rebuilt_on_another_worker(self):
         target = broadcaster._stored_peer(-1001234567890, ("channel", 987654321))
         self.assertIsInstance(target, InputPeerChannel)
@@ -112,6 +157,44 @@ class ScalingTests(unittest.IsolatedAsyncioTestCase):
                 999999,
                 cycle_started_at=cycle_started,
                 success_times={-1001: cycle_started},
+            )
+
+        self.assertEqual([-1002], sent_to)
+
+    async def test_each_group_obeys_its_own_next_send_time(self):
+        sent_to = []
+
+        class Client:
+            async def send_message(self, chat_id, *_args, **_kwargs):
+                sent_to.append(chat_id)
+
+        now = datetime.utcnow()
+        waiting = SimpleNamespace(chat_id=-1001, title="Waiting")
+        ready = SimpleNamespace(chat_id=-1002, title="Ready")
+
+        async def no_wait(_profile, _seconds, _started_at, next_rest_at):
+            return next_rest_at, True
+
+        with (
+            patch.object(broadcaster, "get_user_client", new=AsyncMock(return_value=Client())),
+            patch.object(broadcaster, "release_user_client", new=AsyncMock()),
+            patch.object(broadcaster, "mark_group_success", new=AsyncMock()),
+            patch.object(broadcaster, "clear_group_cooldown", new=AsyncMock()),
+            patch.object(broadcaster, "_limited_sleep", new=no_wait),
+        ):
+            await broadcaster._send_cycle(
+                "123",
+                123,
+                "test",
+                [waiting, ready],
+                {},
+                0,
+                999999,
+                success_times={
+                    -1001: now - timedelta(minutes=5),
+                    -1002: now - timedelta(minutes=11),
+                },
+                interval_minutes=10,
             )
 
         self.assertEqual([-1002], sent_to)
