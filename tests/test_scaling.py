@@ -51,6 +51,79 @@ class ScalingTests(unittest.IsolatedAsyncioTestCase):
                 10,
                 15 * 60,
                 now=finished_at,
+                group_next_send_at=finished_at + timedelta(minutes=3),
+            ),
+        )
+
+    def test_worker_wakes_for_earliest_group(self):
+        started_at = datetime.utcnow()
+        group_due_at = started_at + timedelta(minutes=5)
+
+        self.assertEqual(
+            group_due_at,
+            broadcaster._next_cycle_run_at(
+                started_at,
+                10,
+                0,
+                now=started_at + timedelta(minutes=1),
+                group_next_send_at=group_due_at,
+            ),
+        )
+
+    def test_slow_group_keeps_learned_fifteen_minute_schedule(self):
+        first_sent_at = datetime.utcnow()
+        slow_mode_due_at = first_sent_at + timedelta(minutes=15)
+
+        self.assertEqual(
+            slow_mode_due_at + timedelta(minutes=15),
+            broadcaster._group_due_after_success(
+                slow_mode_due_at,
+                first_sent_at,
+                10,
+                slow_mode_due_at,
+            ),
+        )
+
+    def test_ten_and_fifteen_minute_groups_run_on_independent_timelines(self):
+        minute_0 = datetime.utcnow()
+        ten_minute_due = broadcaster._group_due_after_success(
+            minute_0,
+            None,
+            10,
+            None,
+        )
+        fifteen_minute_due = minute_0 + timedelta(minutes=15)
+
+        minute_20 = broadcaster._group_due_after_success(
+            ten_minute_due,
+            minute_0,
+            10,
+            ten_minute_due,
+        )
+        minute_30 = broadcaster._group_due_after_success(
+            fifteen_minute_due,
+            minute_0,
+            10,
+            fifteen_minute_due,
+        )
+
+        self.assertEqual(minute_0 + timedelta(minutes=10), ten_minute_due)
+        self.assertEqual(minute_0 + timedelta(minutes=15), fifteen_minute_due)
+        self.assertEqual(minute_0 + timedelta(minutes=20), minute_20)
+        self.assertEqual(minute_0 + timedelta(minutes=30), minute_30)
+
+    def test_deleted_group_cooldown_does_not_wake_worker(self):
+        now = datetime.utcnow()
+        groups = [SimpleNamespace(chat_id=-1001)]
+
+        self.assertEqual(
+            now + timedelta(minutes=10),
+            broadcaster._earliest_group_due_at(
+                groups,
+                {
+                    -1001: now + timedelta(minutes=10),
+                    -9999: now - timedelta(days=1),
+                },
             ),
         )
 
@@ -80,6 +153,7 @@ class ScalingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(broadcaster, "get_user_client", new=AsyncMock(side_effect=lambda _uid: Client())),
             patch.object(broadcaster, "release_user_client", new=AsyncMock()) as release_client,
             patch.object(broadcaster, "mark_group_success", new=AsyncMock()),
+            patch.object(broadcaster, "set_group_cooldown", new=AsyncMock()),
             patch.object(broadcaster, "clear_group_cooldown", new=AsyncMock()),
             patch.object(broadcaster, "_limited_sleep", new=no_wait),
         ):
@@ -144,6 +218,7 @@ class ScalingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(broadcaster, "get_user_client", new=AsyncMock(return_value=Client())),
             patch.object(broadcaster, "release_user_client", new=AsyncMock()),
             patch.object(broadcaster, "mark_group_success", new=AsyncMock()),
+            patch.object(broadcaster, "set_group_cooldown", new=AsyncMock()),
             patch.object(broadcaster, "clear_group_cooldown", new=AsyncMock()),
             patch.object(broadcaster, "_limited_sleep", new=no_wait),
         ):
@@ -179,6 +254,7 @@ class ScalingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(broadcaster, "get_user_client", new=AsyncMock(return_value=Client())),
             patch.object(broadcaster, "release_user_client", new=AsyncMock()),
             patch.object(broadcaster, "mark_group_success", new=AsyncMock()),
+            patch.object(broadcaster, "set_group_cooldown", new=AsyncMock()),
             patch.object(broadcaster, "clear_group_cooldown", new=AsyncMock()),
             patch.object(broadcaster, "_limited_sleep", new=no_wait),
         ):

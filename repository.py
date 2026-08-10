@@ -452,6 +452,15 @@ async def clear_group_cooldown(profile: str, chat_id: int) -> None:
         await session.commit()
 
 
+async def clear_profile_group_cooldowns(profile: str) -> None:
+    """Forget learned group timing so Telegram changes are relearned after rest."""
+    async with async_session() as session:
+        await session.execute(
+            delete(GroupCooldown).where(GroupCooldown.profile == profile)
+        )
+        await session.commit()
+
+
 def user_profile_key(user_id: int) -> str:
     return str(user_id)
 
