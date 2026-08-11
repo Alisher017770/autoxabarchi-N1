@@ -97,6 +97,7 @@ from repository import (
     user_profile_key,
 )
 from states import AdStates
+from time_display import format_tashkent_time
 from telethon_clients import (
     cancel_login,
     confirm_login_code,
@@ -198,7 +199,7 @@ def _key(message: Message | CallbackQuery) -> str:
 
 
 def _format_until(value: datetime | None) -> str:
-    return value.strftime("%Y-%m-%d %H:%M") if value else "йўқ"
+    return format_tashkent_time(value)
 
 
 def _interval_label(minutes: int) -> str:
