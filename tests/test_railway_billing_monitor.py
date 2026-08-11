@@ -41,6 +41,46 @@ class RailwayBillingMonitorTests(unittest.IsolatedAsyncioTestCase):
 
         bot.send_message.assert_not_awaited()
 
+    async def test_warns_running_low_interval_profile_once(self):
+        bot = SimpleNamespace(send_message=AsyncMock())
+        settings = SimpleNamespace(profile="12345", interval_minutes=3)
+        with (
+            patch.object(
+                subscription_monitor,
+                "list_running_low_interval_settings",
+                AsyncMock(return_value=[settings]),
+            ),
+            patch.object(
+                subscription_monitor,
+                "get_bot_config_value",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(subscription_monitor, "set_bot_config", AsyncMock()) as mark,
+        ):
+            await subscription_monitor.check_low_interval_warnings(bot)
+
+        bot.send_message.assert_awaited_once()
+        mark.assert_awaited_once_with("low-interval-warning:12345", "3")
+
+    async def test_skips_low_interval_profile_already_warned(self):
+        bot = SimpleNamespace(send_message=AsyncMock())
+        settings = SimpleNamespace(profile="12345", interval_minutes=5)
+        with (
+            patch.object(
+                subscription_monitor,
+                "list_running_low_interval_settings",
+                AsyncMock(return_value=[settings]),
+            ),
+            patch.object(
+                subscription_monitor,
+                "get_bot_config_value",
+                AsyncMock(return_value="5"),
+            ),
+        ):
+            await subscription_monitor.check_low_interval_warnings(bot)
+
+        bot.send_message.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

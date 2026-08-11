@@ -54,6 +54,7 @@ from keyboards import (
     subscriber_thanks_kb,
     subscription_offer_kb,
 )
+from interval_safety import is_high_spam_risk_interval, low_interval_warning_text
 from repository import (
     activate_subscription,
     add_bot_admin,
@@ -167,10 +168,20 @@ INTERVAL_TEXTS = {"⏱ Вақт", "Вақт", "⏱ Interval", "Interval"}
 START_STOP_TEXTS = {"🚀 Старт / Стоп", "Старт / Стоп", "🚀 Start / Stop", "Start / Stop"}
 MANUAL_INTERVAL_TEXTS = {"⚙️ Қўлда танлаш", "Қўлда танлаш", "⚙️ Qo'lda tanlash", "Qo'lda tanlash"}
 INTERVAL_PRESETS = {
+    "⚠️ Хавфли - 5 дақиқа": 5,
+    "Хавфли - 5 дақиқа": 5,
     "⚡ Тез - 5 дақиқа": 5,
     "Тез - 5 дақиқа": 5,
     "⚡ Tez - 5 daqiqa": 5,
     "Tez - 5 daqiqa": 5,
+    "🛡 Тавсия - 10 дақиқа": 10,
+    "Тавсия - 10 дақиқа": 10,
+    "🛡 Tavsiya - 10 daqiqa": 10,
+    "Tavsiya - 10 daqiqa": 10,
+    "✅ Барқарор - 15 дақиқа": 15,
+    "Барқарор - 15 дақиқа": 15,
+    "✅ Barqaror - 15 daqiqa": 15,
+    "Barqaror - 15 daqiqa": 15,
     "✅ Ўртача - 15 дақиқа": 15,
     "Ўртача - 15 дақиқа": 15,
     "✅ O'rtacha - 15 daqiqa": 15,
@@ -1993,8 +2004,8 @@ async def show_interval(message: Message):
     await message.answer(
         "⏱ Хабар юбориш вақтини танланг:\n\n"
         f"Ҳозирги: {_interval_label(settings_row.interval_minutes)}\n\n"
-        "⚡ Тез - ҳар 5 дақиқа\n"
-        "✅ Ўртача - ҳар 15 дақиқа\n"
+        "⚠️ 5 дақиқа — spam хавфи юқори\n"
+        "🛡 Тавсия — ҳар 10–15 дақиқа\n"
         "🐢 Секин - ҳар 30 дақиқа\n\n"
         "Бот хавфсизлик учун ҳар 6 соатда 20 дақиқа дам олади ва 12 соатдан кейин ўзи тўхтайди.",
         reply_markup=interval_kb(),
@@ -2007,6 +2018,13 @@ async def set_interval_preset(message: Message):
         return
     minutes = INTERVAL_PRESETS[message.text]
     await set_interval(_key(message), minutes)
+    if is_high_spam_risk_interval(minutes):
+        await message.answer(
+            low_interval_warning_text(minutes),
+            parse_mode="HTML",
+            reply_markup=settings_kb(),
+        )
+        return
     await message.answer(
         f"✅ Вақт танланди: {_interval_label(minutes)}\n\n"
         "Энди «🚀 Старт / Стоп» босиб ишга туширишингиз мумкин.",
@@ -2028,6 +2046,13 @@ async def set_interval_message(message: Message):
     number = int(re.search(r"\d+", message.text or "").group())
     minutes = number * 60 if ("soat" in message.text or "соат" in message.text) else number
     await set_interval(_key(message), minutes)
+    if is_high_spam_risk_interval(minutes):
+        await message.answer(
+            low_interval_warning_text(minutes),
+            parse_mode="HTML",
+            reply_markup=settings_kb(),
+        )
+        return
     await message.answer(f"✅ Вақт янгиланди: {_interval_label(minutes)}", reply_markup=settings_kb())
 
 

@@ -6,15 +6,19 @@ from aiogram import Bot
 
 from admin_alerts import save_admin_error
 from config import ADMIN_ID
+from interval_safety import low_interval_warning_text
 from keyboards import main_menu_kb
 from repository import (
+    get_bot_config_value,
     get_railway_billing_status,
     list_expired_subscriptions_for_notice,
+    list_running_low_interval_settings,
     list_subscriptions_for_reminder,
     mark_railway_billing_notified,
     mark_subscription_expired_notice,
     mark_subscription_reminded,
     set_running,
+    set_bot_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +81,24 @@ async def check_railway_billing(bot: Bot):
     await mark_railway_billing_notified(due_date)
 
 
+async def check_low_interval_warnings(bot: Bot):
+    for settings in await list_running_low_interval_settings():
+        warning_key = f"low-interval-warning:{settings.profile}"
+        interval_value = str(settings.interval_minutes)
+        if await get_bot_config_value(warning_key) == interval_value:
+            continue
+        try:
+            await bot.send_message(
+                int(settings.profile),
+                low_interval_warning_text(settings.interval_minutes, already_running=True),
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.exception("[%s] қисқа вақт огоҳлантириши юборилмади", settings.profile)
+            continue
+        await set_bot_config(warning_key, interval_value)
+
+
 async def subscription_monitor(bot: Bot):
     while True:
         try:
@@ -89,4 +111,9 @@ async def subscription_monitor(bot: Bot):
         except Exception as exc:
             logger.exception("Railway тўлов мониторда хато")
             await save_admin_error("railway-billing-monitor", "Railway тўлов мониторингида хато", exc)
+        try:
+            await check_low_interval_warnings(bot)
+        except Exception as exc:
+            logger.exception("Қисқа вақт огоҳлантириш мониторда хато")
+            await save_admin_error("low-interval-monitor", "Қисқа вақт огоҳлантиришда хато", exc)
         await asyncio.sleep(60 * 60)
