@@ -20,12 +20,13 @@ from repository import (
     set_running,
     set_bot_config,
 )
+from time_display import format_tashkent_time
 
 logger = logging.getLogger(__name__)
 
 
 def _format_until(value: datetime) -> str:
-    return value.strftime("%Y-%m-%d %H:%M")
+    return format_tashkent_time(value)
 
 
 async def check_subscriptions(bot: Bot):
@@ -116,4 +117,5 @@ async def subscription_monitor(bot: Bot):
         except Exception as exc:
             logger.exception("Қисқа вақт огоҳлантириш мониторда хато")
             await save_admin_error("low-interval-monitor", "Қисқа вақт огоҳлантиришда хато", exc)
-        await asyncio.sleep(60 * 60)
+        # Expired broadcasts should stop promptly instead of waiting up to an hour.
+        await asyncio.sleep(5 * 60)
