@@ -452,6 +452,22 @@ async def clear_group_cooldown(profile: str, chat_id: int) -> None:
         await session.commit()
 
 
+async def list_running_low_interval_settings(max_minutes: int = 9) -> list[Settings]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(Settings).where(
+                Settings.is_running.is_(True),
+                Settings.interval_minutes <= max_minutes,
+            )
+        )
+        return list(result.scalars().all())
+
+
+async def get_bot_config_value(key: str) -> str | None:
+    async with async_session() as session:
+        return await session.scalar(select(BotConfig.value).where(BotConfig.key == key))
+
+
 async def clear_profile_group_cooldowns(profile: str) -> None:
     """Forget learned group timing so Telegram changes are relearned after rest."""
     async with async_session() as session:

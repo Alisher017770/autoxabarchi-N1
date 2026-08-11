@@ -26,6 +26,8 @@ RESERVED_MESSAGE_TEXTS = {
     "💬 Хабар ёзиш", "Хабар ёзиш", "💬 Xabar yozish", "Xabar yozish",
     "⚙️ Созламалар", "Созламалар", "⚙️ Sozlamalar", "Sozlamalar",
     "⏱ Вақт", "Вақт", "⏱ Interval", "Interval",
+    "⚠️ Хавфли - 5 дақиқа", "🛡 Тавсия - 10 дақиқа",
+    "✅ Барқарор - 15 дақиқа", "🐢 Секин - 30 дақиқа",
     "🚀 Старт / Стоп", "Старт / Стоп", "🚀 Start / Stop", "Start / Stop",
     "⚙️ Қўлда танлаш", "Қўлда танлаш",
     "📊 Статистика", "Статистика",
@@ -148,8 +150,9 @@ def settings_kb() -> ReplyKeyboardMarkup:
 def interval_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="⚡ Тез - 5 дақиқа")],
-            [KeyboardButton(text="✅ Ўртача - 15 дақиқа")],
+            [KeyboardButton(text="⚠️ Хавфли - 5 дақиқа")],
+            [KeyboardButton(text="🛡 Тавсия - 10 дақиқа")],
+            [KeyboardButton(text="✅ Барқарор - 15 дақиқа")],
             [KeyboardButton(text="🐢 Секин - 30 дақиқа")],
             [KeyboardButton(text="⚙️ Қўлда танлаш")],
             [KeyboardButton(text="⬅️ Орқага")],
