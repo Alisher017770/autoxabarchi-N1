@@ -765,6 +765,39 @@ async def get_admin_user_card(user_id: int) -> dict | None:
         }
 
 
+async def list_admin_group_statuses(user_id: int, limit: int = 30) -> list[dict]:
+    """Return delivery status for one user's groups, including disabled ones."""
+    profile = user_profile_key(user_id)
+    async with async_session() as session:
+        result = await session.execute(
+            select(Group, GroupSuccess.last_success_at, GroupCooldown.next_send_at)
+            .outerjoin(
+                GroupSuccess,
+                (GroupSuccess.profile == Group.profile)
+                & (GroupSuccess.chat_id == Group.chat_id),
+            )
+            .outerjoin(
+                GroupCooldown,
+                (GroupCooldown.profile == Group.profile)
+                & (GroupCooldown.chat_id == Group.chat_id),
+            )
+            .where(Group.profile == profile)
+            .order_by(Group.send_enabled.desc(), Group.title)
+            .limit(limit)
+        )
+        return [
+            {
+                "chat_id": group.chat_id,
+                "title": group.title,
+                "send_enabled": group.send_enabled,
+                "disabled_reason": group.disabled_reason,
+                "last_success_at": last_success_at,
+                "next_send_at": next_send_at,
+            }
+            for group, last_success_at, next_send_at in result.all()
+        ]
+
+
 async def list_problem_users(limit: int = 20) -> list[dict]:
     now = utc_now()
     async with async_session() as session:

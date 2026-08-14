@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import repository
 from db import Base
-from models import BroadcastJob, Group, Settings
+from models import BroadcastJob, Group, GroupCooldown, GroupSuccess, Settings
 
 
 class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
@@ -79,6 +79,25 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
         disabled = await repository.list_groups("1003", include_disabled=True)
         self.assertEqual(1, len(disabled))
         self.assertFalse(disabled[0].send_enabled)
+
+    async def test_admin_group_status_includes_delivery_timestamps(self):
+        now = datetime.now()
+        async with self.sessions() as session:
+            session.add(Group(profile="1004", chat_id=-1004, title="Status group"))
+            session.add(GroupSuccess(profile="1004", chat_id=-1004, last_success_at=now))
+            session.add(
+                GroupCooldown(
+                    profile="1004", chat_id=-1004, next_send_at=now + timedelta(minutes=10)
+                )
+            )
+            await session.commit()
+
+        statuses = await repository.list_admin_group_statuses(1004)
+
+        self.assertEqual(1, len(statuses))
+        self.assertEqual(-1004, statuses[0]["chat_id"])
+        self.assertEqual(now, statuses[0]["last_success_at"])
+        self.assertEqual(now + timedelta(minutes=10), statuses[0]["next_send_at"])
 
 
 if __name__ == "__main__":

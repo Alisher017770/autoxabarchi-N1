@@ -24,6 +24,7 @@ from config import (
 )
 from keyboards import (
     admin_audience_confirm_kb,
+    admin_group_status_kb,
     admin_management_kb,
     admin_menu_kb,
     admin_user_card_kb,
@@ -65,6 +66,7 @@ from repository import (
     get_admin_stats,
     get_financial_summary,
     get_admin_user_card,
+    list_admin_group_statuses,
     get_broadcast_issue,
     get_payment_config,
     get_railway_billing_status,
@@ -988,6 +990,27 @@ async def _send_admin_user_card(target: Message, user_id: int, edit: bool = Fals
         await target.answer(_admin_user_card_text(item), **kwargs)
 
 
+def _admin_group_status_text(user_id: int, groups: list[dict]) -> str:
+    if not groups:
+        return "📡 <b>Гуруҳлар ҳолати</b>\n\nҲозирча гуруҳ йўқ."
+    lines = [f"📡 <b>Гуруҳлар ҳолати · {user_id}</b>", ""]
+    for group in groups:
+        title = html.escape(str(group["title"]))
+        if not group["send_enabled"]:
+            reason = html.escape(str(group["disabled_reason"] or "Ёзиш ҳуқуқи йўқ"))
+            lines.append(f"🔒 <b>{title}</b>\nСабаб: {reason}")
+            continue
+        last_sent = _format_until(group["last_success_at"])
+        next_allowed = _format_until(group["next_send_at"])
+        lines.append(
+            f"✅ <b>{title}</b>\n"
+            f"Охирги юбориш: {last_sent}\n"
+            f"Кейинги мумкин вақт: {next_allowed}"
+        )
+    lines.append("\nℹ️ Вақт келмаган гуруҳ кутмоқда; 🔒 гуруҳга эса умуман уринмайди.")
+    return "\n\n".join(lines)
+
+
 @router.message(F.text.in_(USER_SEARCH_TEXTS))
 async def ask_admin_user_search(message: Message, state: FSMContext):
     if not _is_admin(message):
@@ -1007,6 +1030,21 @@ async def admin_user_card_callback(callback: CallbackQuery):
         return
     user_id = int(callback.data.split(":", 1)[1])
     await _send_admin_user_card(callback.message, user_id, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("usergroups:"))
+async def admin_user_groups_callback(callback: CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    user_id = int(callback.data.split(":", 1)[1])
+    groups = await list_admin_group_statuses(user_id)
+    await callback.message.edit_text(
+        _admin_group_status_text(user_id, groups),
+        parse_mode="HTML",
+        reply_markup=admin_group_status_kb(user_id),
+    )
     await callback.answer()
 
 

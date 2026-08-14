@@ -302,8 +302,15 @@ def admin_user_card_kb(user_id: int, active: bool) -> InlineKeyboardMarkup:
     kb.button(text="🎟 30 кун узайтириш", callback_data=f"userextend:{user_id}:30")
     if active:
         kb.button(text="🚫 Обунани ўчириш", callback_data=f"userrevoke:{user_id}")
+    kb.button(text="📡 Гуруҳлар ҳолати", callback_data=f"usergroups:{user_id}")
     kb.button(text="🔄 Янгилаш", callback_data=f"usercard:{user_id}")
     kb.adjust(1)
+    return kb.as_markup()
+
+
+def admin_group_status_kb(user_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="👤 Картага қайтиш", callback_data=f"usercard:{user_id}")
     return kb.as_markup()
 
 
