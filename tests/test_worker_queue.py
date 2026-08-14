@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import repository
 from db import Base
-from models import BroadcastJob, Settings
+from models import BroadcastJob, Group, Settings
 
 
 class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
@@ -67,6 +67,18 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
             180,
         )
         self.assertFalse(renewed)
+
+    async def test_disabled_group_is_excluded_from_broadcasts(self):
+        async with self.sessions() as session:
+            session.add(Group(profile="1003", chat_id=-1003, title="No text"))
+            await session.commit()
+
+        await repository.disable_group("1003", -1003, "No text permission")
+
+        self.assertEqual([], await repository.list_groups("1003"))
+        disabled = await repository.list_groups("1003", include_disabled=True)
+        self.assertEqual(1, len(disabled))
+        self.assertFalse(disabled[0].send_enabled)
 
 
 if __name__ == "__main__":

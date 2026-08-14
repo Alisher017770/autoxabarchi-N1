@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from telethon_clients import get_user_dialog_groups
+from telethon_clients import get_user_dialog_groups, group_allows_text_messages
 
 
 class FakeClient:
@@ -17,6 +17,13 @@ class FakeClient:
 
 
 class TelegramGroupTests(unittest.IsolatedAsyncioTestCase):
+    def test_voice_only_group_is_not_eligible_for_text_broadcasts(self):
+        entity = SimpleNamespace(
+            default_banned_rights=SimpleNamespace(send_messages=True)
+        )
+        self.assertFalse(group_allows_text_messages(entity))
+        self.assertTrue(group_allows_text_messages(SimpleNamespace()))
+
     async def test_scans_all_dialogs_before_filtering_groups(self):
         dialogs = [
             SimpleNamespace(id=index, name=f"Chat {index}", is_group=index > 50)

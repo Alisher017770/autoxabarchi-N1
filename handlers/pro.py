@@ -1842,7 +1842,7 @@ async def groups_menu(message: Message):
 async def groups_list(message: Message):
     if not await _ensure_user_access(message):
         return
-    groups = await list_groups(_key(message))
+    groups = await list_groups(_key(message), include_disabled=True)
     if not groups:
         await message.answer("Ҳозирча гуруҳ қўшилмаган.")
         return
@@ -1861,7 +1861,11 @@ async def groups_add(message: Message):
         return
 
     existing = {group.chat_id for group in await list_groups(_key(message))}
-    new_dialogs = [dialog for dialog in dialogs if dialog["chat_id"] not in existing]
+    new_dialogs = [
+        dialog
+        for dialog in dialogs
+        if dialog["chat_id"] not in existing and dialog.get("text_allowed", True)
+    ]
     if not new_dialogs:
         await message.answer("Қўшиладиган янги гуруҳ топилмади.")
         return
@@ -1879,10 +1883,16 @@ async def groups_add_all(message: Message):
         await message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
         return
     added_count = 0
+    skipped_count = 0
     for dialog in dialogs:
+        if not dialog.get("text_allowed", True):
+            skipped_count += 1
+            continue
         if await add_group(_key(message), dialog["chat_id"], dialog["title"]):
             added_count += 1
     groups = await list_groups(_key(message))
+    if skipped_count:
+        await message.answer(f"🔒 {skipped_count} ta guruhda matn yozish mumkin emas, ular qo'shilmadi.")
     await message.answer(
         f"✅ {added_count} та янги гуруҳ қўшилди. Жами: {len(groups)} та.\n\n"
         "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
@@ -1899,7 +1909,11 @@ async def add_group_cb(callback: CallbackQuery):
         await callback.message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
         await callback.answer()
         return
-    title = next((dialog["title"] for dialog in dialogs if dialog["chat_id"] == chat_id), "Номаълум гуруҳ")
+    dialog = next((dialog for dialog in dialogs if dialog["chat_id"] == chat_id), None)
+    if dialog is None or not dialog.get("text_allowed", True):
+        await callback.answer("Bu guruhda matn yozish mumkin emas", show_alert=True)
+        return
+    title = dialog["title"]
     added = await add_group(user_profile_key(callback.from_user.id), chat_id, title)
     await callback.answer("Қўшилди" if added else "Аллақачон бор")
     groups = await list_groups(user_profile_key(callback.from_user.id))
@@ -1919,10 +1933,18 @@ async def add_all_groups_cb(callback: CallbackQuery):
         await callback.answer()
         return
     added_count = 0
+    skipped_count = 0
     for dialog in dialogs:
+        if not dialog.get("text_allowed", True):
+            skipped_count += 1
+            continue
         if await add_group(user_profile_key(callback.from_user.id), dialog["chat_id"], dialog["title"]):
             added_count += 1
     groups = await list_groups(user_profile_key(callback.from_user.id))
+    if skipped_count:
+        await callback.message.answer(
+            f"🔒 {skipped_count} ta guruhda matn yozish mumkin emas, ular qo'shilmadi."
+        )
     await callback.message.answer(
         f"✅ {added_count} та янги гуруҳ қўшилди. Жами: {len(groups)} та.\n\n"
         "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
@@ -1935,7 +1957,7 @@ async def add_all_groups_cb(callback: CallbackQuery):
 async def groups_delete(message: Message):
     if not await _ensure_user_access(message):
         return
-    groups = await list_groups(_key(message))
+    groups = await list_groups(_key(message), include_disabled=True)
     if not groups:
         await message.answer("Ўчириладиган гуруҳ йўқ.")
         return

@@ -38,6 +38,7 @@ from repository import (
     clear_profile_group_cooldowns,
     claim_due_broadcast_jobs,
     complete_broadcast_job,
+    disable_group,
     get_broadcast_issue,
     get_group_cooldowns,
     get_group_peer_targets,
@@ -435,7 +436,7 @@ async def _send_cycle(
                     logger.warning("[%s] %s guruhida sekin rejim: %ss", profile, group.title, exc.seconds)
                 except (ChatWriteForbiddenError, UserBannedInChannelError):
                     write_forbidden_count += 1
-                    await defer_group(group.chat_id)
+                    await disable_group(profile, group.chat_id, "Telegram yozish huquqini bermadi")
                     await set_broadcast_issue(
                         profile,
                         "write_forbidden",
@@ -449,7 +450,7 @@ async def _send_cycle(
                         break
                     if _is_write_forbidden_error(exc):
                         write_forbidden_count += 1
-                        await defer_group(group.chat_id)
+                        await disable_group(profile, group.chat_id, "Telegram yozish huquqini bermadi")
                         await set_broadcast_issue(
                             profile,
                             "write_forbidden",
@@ -569,13 +570,8 @@ async def _process_broadcast_job(job) -> None:
                 peer_targets=peer_targets,
                 interval_minutes=settings.interval_minutes,
             )
-            if can_continue and _all_attempts_write_forbidden(
-                attempted_count,
-                sent_count,
-                write_forbidden_count,
-            ):
-                await _stop_all_groups_forbidden(profile, attempted_count)
-                can_continue = False
+            # Group-specific permission errors are disabled individually above.
+            # They must not be mistaken for a profile-wide spam restriction.
 
         settings = await get_settings(profile)
         if not can_continue or not settings.is_running:
@@ -711,7 +707,7 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
             client = None
             return False, "Telegram ҳали ҳам spam чекловини қайтарди. Кейинроқ қайта текширинг."
         except (ChatWriteForbiddenError, UserBannedInChannelError):
-            forbidden += 1
+            await disable_group(profile, group.chat_id, "Telegram yozish huquqini bermadi")
         except FloodWaitError as exc:
             await release_user_client(user_id)
             client = None

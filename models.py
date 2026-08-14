@@ -15,6 +15,8 @@ class Group(Base):
     profile: Mapped[str] = mapped_column(String(20), index=True)
     chat_id: Mapped[int] = mapped_column(BigInteger)
     title: Mapped[str] = mapped_column(String(255))
+    send_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    disabled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class GroupCooldown(Base):

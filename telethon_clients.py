@@ -20,6 +20,17 @@ GROUP_SCAN_TIMEOUT_SECONDS = 90
 logger = logging.getLogger(__name__)
 
 
+def group_allows_text_messages(entity) -> bool:
+    """Return false for groups whose default rules prohibit normal messages.
+
+    This catches voice-only/media-only groups without sending a test message.
+    Telegram can still apply a separate restriction to one specific profile;
+    that case is handled by the broadcaster when Telegram returns the error.
+    """
+    banned_rights = getattr(entity, "default_banned_rights", None)
+    return not bool(getattr(banned_rights, "send_messages", False))
+
+
 @dataclass(frozen=True)
 class LoginCodeInfo:
     delivery_text: str
@@ -351,6 +362,9 @@ async def get_user_dialog_groups(user_id: int) -> list[dict]:
                         "title": dialog.name,
                         "peer_type": peer_type,
                         "access_hash": access_hash,
+                        "text_allowed": group_allows_text_messages(
+                            getattr(dialog, "entity", None)
+                        ),
                     })
             await save_group_peers(
                 str(user_id),

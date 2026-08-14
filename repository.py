@@ -335,9 +335,12 @@ async def stop_all_running_profiles():
         await session.commit()
 
 
-async def list_groups(profile: str) -> list[Group]:
+async def list_groups(profile: str, *, include_disabled: bool = False) -> list[Group]:
     async with async_session() as session:
-        result = await session.execute(select(Group).where(Group.profile == profile))
+        statement = select(Group).where(Group.profile == profile)
+        if not include_disabled:
+            statement = statement.where(Group.send_enabled.is_(True))
+        result = await session.execute(statement)
         return list(result.scalars().all())
 
 
@@ -346,7 +349,13 @@ async def add_group(profile: str, chat_id: int, title: str):
         existing = await session.execute(
             select(Group).where(Group.profile == profile, Group.chat_id == chat_id)
         )
-        if existing.scalar_one_or_none():
+        group = existing.scalar_one_or_none()
+        if group:
+            if not group.send_enabled:
+                group.send_enabled = True
+                group.disabled_reason = None
+                await session.commit()
+                return True
             return False
         session.add(Group(profile=profile, chat_id=chat_id, title=title))
         try:
@@ -355,6 +364,25 @@ async def add_group(profile: str, chat_id: int, title: str):
             await session.rollback()
             return False
         return True
+
+
+async def disable_group(profile: str, chat_id: int, reason: str) -> None:
+    """Stop retrying a group where this profile cannot send text messages."""
+    async with async_session() as session:
+        group = await session.scalar(
+            select(Group).where(Group.profile == profile, Group.chat_id == chat_id)
+        )
+        if group is None:
+            return
+        group.send_enabled = False
+        group.disabled_reason = reason[:500]
+        await session.execute(
+            delete(GroupCooldown).where(
+                GroupCooldown.profile == profile,
+                GroupCooldown.chat_id == chat_id,
+            )
+        )
+        await session.commit()
 
 
 async def remove_group(profile: str, chat_id: int):
@@ -403,6 +431,7 @@ async def list_spam_recheck_groups(profile: str, limit: int = 5) -> list[Group]:
                 & (GroupSuccess.chat_id == Group.chat_id),
             )
             .where(Group.profile == profile)
+            .where(Group.send_enabled.is_(True))
             .order_by(
                 GroupSuccess.last_success_at.is_(None),
                 GroupSuccess.last_success_at.desc(),
