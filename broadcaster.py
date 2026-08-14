@@ -31,6 +31,7 @@ from config import (
     REST_DURATION_MINUTES,
     REST_EVERY_MINUTES,
 )
+from time_display import utc_now
 from repository import (
     clear_broadcast_issue,
     clear_group_cooldown,
@@ -284,7 +285,7 @@ def _next_cycle_run_at(
     group_next_send_at: datetime | None = None,
 ) -> datetime:
     """Wake for the earliest group while preserving profile-wide flood waits."""
-    now = now or datetime.utcnow()
+    now = now or utc_now()
     anchor = cycle_started_at or now
     cadence_at = anchor + timedelta(minutes=interval_minutes)
     retry_at = now + timedelta(seconds=retry_after_seconds)
@@ -340,7 +341,7 @@ async def _send_cycle(
     client = None
 
     async def defer_group(chat_id: int) -> None:
-        next_send_at = datetime.utcnow() + timedelta(minutes=interval_minutes)
+        next_send_at = utc_now() + timedelta(minutes=interval_minutes)
         await set_group_cooldown(profile, chat_id, next_send_at)
         cooldowns[chat_id] = next_send_at
 
@@ -383,8 +384,8 @@ async def _send_cycle(
                     interval_minutes,
                     slow_mode_until,
                 )
-                if next_send_at and next_send_at > datetime.utcnow():
-                    remaining = max(1, int((next_send_at - datetime.utcnow()).total_seconds()))
+                if next_send_at and next_send_at > utc_now():
+                    remaining = max(1, int((next_send_at - utc_now()).total_seconds()))
                     logger.info(
                         "[%s] %s guruhining alohida vaqti, yana %ss dan keyin uriniladi",
                         profile,
@@ -398,7 +399,7 @@ async def _send_cycle(
                     await client.send_message(target, text, parse_mode="html")
                     sent_count += 1
                     await mark_group_success(profile, group.chat_id)
-                    sent_at = datetime.utcnow()
+                    sent_at = utc_now()
                     group_due_at = _group_due_after_success(
                         sent_at,
                         last_success_at,
@@ -423,7 +424,7 @@ async def _send_cycle(
                     logger.warning("[%s] FloodWait: %ss; profil navbatdan chiqarildi", profile, exc.seconds)
                     break
                 except SlowModeWaitError as exc:
-                    next_send_at = datetime.utcnow() + timedelta(seconds=exc.seconds)
+                    next_send_at = utc_now() + timedelta(seconds=exc.seconds)
                     await set_group_cooldown(profile, group.chat_id, next_send_at)
                     cooldowns[group.chat_id] = next_send_at
                     await set_broadcast_issue(
@@ -501,7 +502,7 @@ async def _process_broadcast_job(job) -> None:
         )
 
     try:
-        now = datetime.utcnow()
+        now = utc_now()
         if now >= job.run_started_at + timedelta(seconds=MAX_RUN_SECONDS):
             await set_running(profile, False)
             await complete_broadcast_job(
@@ -691,7 +692,7 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
             await set_group_cooldown(
                 profile,
                 group.chat_id,
-                datetime.utcnow() + timedelta(minutes=settings.interval_minutes),
+                utc_now() + timedelta(minutes=settings.interval_minutes),
             )
             await clear_broadcast_issue(profile)
             await release_user_client(user_id)
@@ -719,7 +720,7 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
             await set_group_cooldown(
                 profile,
                 group.chat_id,
-                datetime.utcnow() + timedelta(seconds=exc.seconds),
+                utc_now() + timedelta(seconds=exc.seconds),
             )
         except Exception as exc:
             if _is_account_spam_error(exc):

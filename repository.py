@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
 from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from time_display import utc_now
 
 
 async def list_bot_admins() -> list[BotAdmin]:
@@ -112,7 +113,7 @@ async def schedule_broadcast_start(
     rest_every_minutes: int,
 ) -> None:
     """Create/reset a queue job when the user presses Start."""
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         settings = await session.get(Settings, profile)
         if settings is None:
@@ -150,7 +151,7 @@ async def prepare_running_broadcast_jobs(
     rest_every_minutes: int,
 ) -> int:
     """Backfill queue rows for profiles that were running before a deploy."""
-    now = datetime.utcnow()
+    now = utc_now()
     created = 0
     async with async_session() as session:
         result = await session.execute(select(Settings).where(Settings.is_running.is_(True)))
@@ -183,7 +184,7 @@ async def claim_due_broadcast_jobs(
     """Atomically lease due jobs; SKIP LOCKED lets workers share the queue."""
     if limit <= 0:
         return []
-    now = datetime.utcnow()
+    now = utc_now()
     lease_until = now + timedelta(seconds=lease_seconds)
     async with async_session() as session:
         stmt = (
@@ -215,7 +216,7 @@ async def claim_due_broadcast_jobs(
 
 async def renew_broadcast_job(profile: str, owner: str, generation: int, lease_seconds: int) -> bool:
     """Renew only while this worker owns the job and the user still wants it running."""
-    now = datetime.utcnow()
+    now = utc_now()
     running = exists(
         select(Settings.profile).where(
             Settings.profile == profile,
@@ -253,7 +254,7 @@ async def complete_broadcast_job(
         "cycle_started_at": None,
         "lease_owner": None,
         "lease_until": None,
-        "updated_at": datetime.utcnow(),
+        "updated_at": utc_now(),
     }
     if next_rest_at is not None:
         values["next_rest_at"] = next_rest_at
@@ -278,7 +279,7 @@ async def release_broadcast_job(
     *,
     retry_seconds: int = 5,
 ) -> None:
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         await session.execute(
             update(BroadcastJob)
@@ -388,7 +389,7 @@ async def mark_group_success(profile: str, chat_id: int) -> None:
         if success is None:
             success = GroupSuccess(profile=profile, chat_id=chat_id)
             session.add(success)
-        success.last_success_at = datetime.utcnow()
+        success.last_success_at = utc_now()
         await session.commit()
 
 
@@ -490,7 +491,7 @@ async def ensure_user(user_id: int, first_name: str | None = None) -> UserAccoun
             session.add(account)
         elif first_name:
             account.first_name = first_name
-        account.updated_at = datetime.utcnow()
+        account.updated_at = utc_now()
         try:
             await session.commit()
         except IntegrityError:
@@ -499,7 +500,7 @@ async def ensure_user(user_id: int, first_name: str | None = None) -> UserAccoun
             account = result.scalar_one()
             if first_name:
                 account.first_name = first_name
-            account.updated_at = datetime.utcnow()
+            account.updated_at = utc_now()
             await session.commit()
         await session.refresh(account)
         return account
@@ -514,7 +515,7 @@ async def save_user_session(user_id: int, phone: str, session_string: str):
             session.add(account)
         account.phone = phone
         account.session_string = session_string
-        account.updated_at = datetime.utcnow()
+        account.updated_at = utc_now()
         try:
             await session.commit()
         except IntegrityError:
@@ -523,7 +524,7 @@ async def save_user_session(user_id: int, phone: str, session_string: str):
             account = result.scalar_one()
             account.phone = phone
             account.session_string = session_string
-            account.updated_at = datetime.utcnow()
+            account.updated_at = utc_now()
             await session.commit()
 
 
@@ -547,7 +548,7 @@ async def clear_user_session(user_id: int) -> None:
             return
         account.phone = None
         account.session_string = None
-        account.updated_at = datetime.utcnow()
+        account.updated_at = utc_now()
         await session.commit()
 
 
@@ -561,7 +562,7 @@ async def has_active_subscription(user_id: int) -> bool:
     async with async_session() as session:
         result = await session.execute(select(Subscription).where(Subscription.user_id == user_id))
         subscription = result.scalar_one_or_none()
-        return bool(subscription and subscription.active_until and subscription.active_until > datetime.utcnow())
+        return bool(subscription and subscription.active_until and subscription.active_until > utc_now())
 
 
 async def subscription_until(user_id: int) -> datetime | None:
@@ -572,14 +573,14 @@ async def subscription_until(user_id: int) -> datetime | None:
 
 
 async def activate_subscription(user_id: int, days: int) -> datetime:
-    until = datetime.utcnow() + timedelta(days=days)
+    until = utc_now() + timedelta(days=days)
     async with async_session() as session:
         result = await session.execute(select(Subscription).where(Subscription.user_id == user_id))
         subscription = result.scalar_one_or_none()
         if subscription is None:
             subscription = Subscription(user_id=user_id)
             session.add(subscription)
-        if subscription.active_until and subscription.active_until > datetime.utcnow():
+        if subscription.active_until and subscription.active_until > utc_now():
             until = subscription.active_until + timedelta(days=days)
         subscription.active_until = until
         await session.commit()
@@ -634,12 +635,12 @@ async def set_payment_status(payment_id: int, status: str, amount: int | None = 
             payment.status = status
             if status == "approved":
                 payment.amount = payment.amount or amount
-                payment.approved_at = payment.approved_at or datetime.utcnow()
+                payment.approved_at = payment.approved_at or utc_now()
             await session.commit()
 
 
 async def list_user_summaries(limit: int = 20, active: bool | None = None) -> list[dict]:
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         query = (
             select(UserAccount, Subscription)
@@ -671,7 +672,7 @@ async def search_users(query_text: str, limit: int = 20) -> list[dict]:
     if not query_text:
         return []
     pattern = f"%{query_text}%"
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         query = (
             select(UserAccount, Subscription)
@@ -701,7 +702,7 @@ async def search_users(query_text: str, limit: int = 20) -> list[dict]:
 
 
 async def get_admin_user_card(user_id: int) -> dict | None:
-    now = datetime.utcnow()
+    now = utc_now()
     profile = user_profile_key(user_id)
     async with async_session() as session:
         result = await session.execute(
@@ -736,7 +737,7 @@ async def get_admin_user_card(user_id: int) -> dict | None:
 
 
 async def list_problem_users(limit: int = 20) -> list[dict]:
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         group_counts = (
             select(Group.profile, func.count(Group.id).label("groups_count"))
@@ -809,7 +810,7 @@ async def list_running_user_summaries(limit: int = 50) -> list[dict]:
 
 
 async def list_expiring_user_summaries(days_left: int, limit: int = 20) -> list[dict]:
-    now = datetime.utcnow()
+    now = utc_now()
     upper = now + timedelta(days=days_left)
     lower = now if days_left == 1 else now + timedelta(days=1)
     async with async_session() as session:
@@ -840,7 +841,7 @@ async def set_broadcast_issue(profile: str, issue_type: str, details: str):
         else:
             issue.issue_type = issue_type
             issue.details = details
-            issue.updated_at = datetime.utcnow()
+            issue.updated_at = utc_now()
         await session.commit()
 
 
@@ -863,7 +864,7 @@ async def record_admin_alert(
     notify_cooldown_minutes: int = 30,
 ) -> bool:
     """Aggregate an error and return whether a critical notification is due."""
-    now = datetime.utcnow()
+    now = utc_now()
     safe_key = key[:128]
     async with async_session() as session:
         alert = await session.get(AdminAlert, safe_key)
@@ -898,7 +899,7 @@ async def record_admin_alert(
 
 
 async def list_recent_admin_alerts(hours: int = 72, limit: int = 15) -> list[AdminAlert]:
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utc_now() - timedelta(hours=hours)
     async with async_session() as session:
         result = await session.execute(
             select(AdminAlert)
@@ -910,7 +911,7 @@ async def list_recent_admin_alerts(hours: int = 72, limit: int = 15) -> list[Adm
 
 
 async def count_users_by_subscription(active: bool) -> int:
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         query = (
             select(func.count())
@@ -925,7 +926,7 @@ async def count_users_by_subscription(active: bool) -> int:
 
 
 async def list_user_ids_by_subscription(active: bool) -> list[int]:
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         query = (
             select(UserAccount.user_id)
@@ -940,7 +941,7 @@ async def list_user_ids_by_subscription(active: bool) -> list[int]:
 
 
 async def get_admin_stats() -> dict:
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         users = await session.scalar(select(func.count()).select_from(UserAccount))
         linked = await session.scalar(
@@ -967,7 +968,7 @@ async def get_admin_stats() -> dict:
 
 
 async def get_financial_summary() -> dict:
-    now = datetime.utcnow()
+    now = utc_now()
     month_start = datetime(now.year, now.month, 1)
     async with async_session() as session:
         users = await session.scalar(select(func.count()).select_from(UserAccount)) or 0
@@ -1032,7 +1033,7 @@ def _next_month_same_day(value: date) -> date:
 
 async def get_railway_billing_status(today: date | None = None) -> dict:
     """Return the owner-managed Railway billing snapshot used for reminders."""
-    today = today or datetime.utcnow().date()
+    today = today or utc_now().date()
     keys = {
         "railway_due_date",
         "railway_estimated_usd",
@@ -1103,7 +1104,7 @@ async def list_user_ids() -> list[int]:
 
 
 async def list_subscriptions_for_reminder(days_before: int = 3) -> list[Subscription]:
-    now = datetime.utcnow()
+    now = utc_now()
     soon = now + timedelta(days=days_before)
     async with async_session() as session:
         result = await session.execute(
@@ -1121,7 +1122,7 @@ async def list_subscriptions_for_reminder(days_before: int = 3) -> list[Subscrip
 
 
 async def list_expired_subscriptions_for_notice() -> list[Subscription]:
-    now = datetime.utcnow()
+    now = utc_now()
     async with async_session() as session:
         result = await session.execute(
             select(Subscription)

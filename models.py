@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import String, BigInteger, Integer, Boolean, Text, UniqueConstraint, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from db import Base
+from time_display import utc_now
 
 
 class Group(Base):
@@ -31,7 +32,7 @@ class GroupSuccess(Base):
 
     profile: Mapped[str] = mapped_column(String(20), primary_key=True)
     chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    last_success_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_success_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class GroupPeer(Base):
@@ -66,7 +67,7 @@ class BroadcastJob(Base):
     generation: Mapped[int] = mapped_column(Integer, default=1)
     lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class UserAccount(Base):
@@ -76,8 +77,8 @@ class UserAccount(Base):
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     session_string: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class Subscription(Base):
@@ -101,7 +102,7 @@ class BroadcastIssue(Base):
     profile: Mapped[str] = mapped_column(String(20), primary_key=True)
     issue_type: Mapped[str] = mapped_column(String(32))
     details: Mapped[str] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class AdminAlert(Base):
@@ -113,8 +114,8 @@ class AdminAlert(Base):
     title: Mapped[str] = mapped_column(String(255))
     details: Mapped[str] = mapped_column(Text)
     count: Mapped[int] = mapped_column(Integer, default=1)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, index=True)
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -125,7 +126,7 @@ class BotAdmin(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     added_by: Mapped[int] = mapped_column(BigInteger)
-    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class BotAdminAudit(Base):
@@ -136,7 +137,7 @@ class BotAdminAudit(Base):
     actor_id: Mapped[int] = mapped_column(BigInteger, index=True)
     target_id: Mapped[int] = mapped_column(BigInteger, index=True)
     action: Mapped[str] = mapped_column(String(16))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class PendingPayment(Base):
@@ -149,7 +150,7 @@ class PendingPayment(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class BotConfig(Base):

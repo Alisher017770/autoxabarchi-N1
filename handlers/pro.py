@@ -97,7 +97,7 @@ from repository import (
     user_profile_key,
 )
 from states import AdStates
-from time_display import format_tashkent_time
+from time_display import format_tashkent_time, utc_now
 from telethon_clients import (
     cancel_login,
     confirm_login_code,
@@ -788,7 +788,7 @@ async def save_admin_railway_billing(message: Message, state: FSMContext):
         due_date = date.fromisoformat(parts[0])
         estimated = Decimal(parts[1].replace(",", "."))
         credit = Decimal(parts[2].replace(",", "."))
-        if due_date < datetime.utcnow().date() or estimated < 0 or credit < 0:
+        if due_date < utc_now().date() or estimated < 0 or credit < 0:
             raise ValueError
     except (ValueError, InvalidOperation):
         await message.answer("Формат нотўғри. Масалан: 2026-08-21 | 5.00 | 0.00")
@@ -1155,7 +1155,7 @@ async def admin_user_remind_callback(callback: CallbackQuery, bot: Bot):
         return
     user_id = int(callback.data.split(":", 1)[1])
     until = await subscription_until(user_id)
-    if not until or until <= datetime.utcnow():
+    if not until or until <= utc_now():
         await callback.answer("Обуна актив эмас.", show_alert=True)
         return
     try:

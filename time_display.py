@@ -5,6 +5,11 @@ UTC = timezone.utc
 TASHKENT = timezone(timedelta(hours=5), name="Asia/Tashkent")
 
 
+def utc_now() -> datetime:
+    """Return a UTC timestamp compatible with the existing naive DB columns."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
 def format_tashkent_time(value: datetime | None, *, empty: str = "йўқ") -> str:
     """Format UTC database timestamps for people in Uzbekistan."""
     if value is None:
