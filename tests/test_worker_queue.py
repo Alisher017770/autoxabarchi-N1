@@ -99,6 +99,33 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(now, statuses[0]["last_success_at"])
         self.assertEqual(now + timedelta(minutes=10), statuses[0]["next_send_at"])
 
+    async def test_user_delivery_status_keeps_only_the_latest_report(self):
+        async with self.sessions() as session:
+            session.add(Settings(profile="1005", is_running=True, interval_minutes=15))
+            session.add(Group(profile="1005", chat_id=-10051, title="Active"))
+            session.add(Group(profile="1005", chat_id=-10052, title="Disabled", send_enabled=False))
+            session.add(BroadcastJob(
+                profile="1005",
+                next_run_at=datetime.utcnow() + timedelta(minutes=15),
+                run_started_at=datetime.utcnow(),
+                next_rest_at=datetime.utcnow() + timedelta(hours=6),
+            ))
+            await session.commit()
+
+        await repository.save_broadcast_report(
+            "1005",
+            active_groups=1,
+            attempted_groups=1,
+            delivered_groups=1,
+            blocked_groups=0,
+        )
+        status = await repository.get_user_delivery_status(1005)
+
+        self.assertEqual(1, status["active_groups"])
+        self.assertEqual(1, status["disabled_groups"])
+        self.assertEqual(1, status["report"].delivered_groups)
+        self.assertIsNotNone(status["next_run_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -72,6 +72,18 @@ class BroadcastJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
+class BroadcastReport(Base):
+    """The most recent delivery summary shown to one user on demand."""
+    __tablename__ = "broadcast_reports"
+
+    profile: Mapped[str] = mapped_column(String(20), primary_key=True)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    active_groups: Mapped[int] = mapped_column(Integer, default=0)
+    attempted_groups: Mapped[int] = mapped_column(Integer, default=0)
+    delivered_groups: Mapped[int] = mapped_column(Integer, default=0)
+    blocked_groups: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class UserAccount(Base):
     __tablename__ = "user_accounts"
 

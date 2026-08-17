@@ -53,6 +53,7 @@ from repository import (
     renew_broadcast_job,
     save_group_peers,
     schedule_broadcast_start,
+    save_broadcast_report,
     set_broadcast_issue,
     set_group_cooldown,
     set_running,
@@ -541,6 +542,9 @@ async def _process_broadcast_job(job) -> None:
             return
 
         groups = await list_groups(profile)
+        attempted_count = 0
+        sent_count = 0
+        write_forbidden_count = 0
         cooldowns: dict[int, datetime] = {}
         retry_after_seconds = 0
         can_continue = True
@@ -572,6 +576,18 @@ async def _process_broadcast_job(job) -> None:
             )
             # Group-specific permission errors are disabled individually above.
             # They must not be mistaken for a profile-wide spam restriction.
+            try:
+                await save_broadcast_report(
+                    profile,
+                    active_groups=len(groups),
+                    attempted_groups=attempted_count,
+                    delivered_groups=sent_count,
+                    blocked_groups=write_forbidden_count,
+                )
+            except Exception:
+                # The optional user-facing report must never delay or retry a
+                # successfully completed delivery cycle.
+                logger.exception("[%s] oxirgi yuborish hisoboti saqlanmadi", profile)
 
         settings = await get_settings(profile)
         if not can_continue or not settings.is_running:

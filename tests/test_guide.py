@@ -15,6 +15,16 @@ class GuideTests(unittest.TestCase):
             labels = [button.text for row in markup.keyboard for button in row]
             self.assertIn("📹 Фойдаланиш қўлланмаси", labels)
 
+    def test_status_button_is_available_only_after_subscription(self):
+        inactive = main_menu_kb(False, True, False, False)
+        active = main_menu_kb(False, True, True, False)
+        inactive_labels = [button.text for row in inactive.keyboard for button in row]
+        active_labels = [button.text for row in active.keyboard for button in row]
+
+        self.assertNotIn("📊 Ҳолатим", inactive_labels)
+        self.assertIn("📊 Ҳолатим", active_labels)
+        self.assertIn("📊 Ҳолатим", RESERVED_MESSAGE_TEXTS)
+
     def test_guide_button_cannot_be_saved_as_broadcast_message(self):
         self.assertIn("📹 Фойдаланиш қўлланмаси", RESERVED_MESSAGE_TEXTS)
 

@@ -68,6 +68,7 @@ from repository import (
     get_admin_user_card,
     list_admin_group_statuses,
     get_broadcast_issue,
+    get_user_delivery_status,
     get_payment_config,
     get_railway_billing_status,
     get_pending_payment,
@@ -158,6 +159,7 @@ SUBSCRIBE_TEXTS = {"💳 Обуна бўлиш", "Обуна бўлиш", "💳 
 PAYMENT_PENDING_TEXTS = {"⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда"}
 SUPPORT_TEXTS = {"🆘 Админ билан боғланиш", "Админ билан боғланиш"}
 GUIDE_TEXTS = {"📹 Фойдаланиш қўлланмаси", "Фойдаланиш қўлланмаси"}
+MY_STATUS_TEXTS = {"📊 Ҳолатим", "Ҳолатим"}
 PHONE_LOGIN_TEXTS = {"📱 Телефон орқали улаш", "Телефон орқали улаш", "📱 Telefon orqali ulash", "Telefon orqali ulash"}
 QR_LOGIN_TEXTS = {"📷 QR-код орқали улаш", "QR-код орқали улаш"}
 GROUPS_TEXTS = {"👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar"}
@@ -273,6 +275,9 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
     if text in GUIDE_TEXTS:
         await _show_guide(message)
         return True
+    if text in MY_STATUS_TEXTS:
+        await show_my_status(message)
+        return True
     if _is_admin(message):
         if text in ADMIN_MANAGEMENT_TEXTS:
             await show_admin_management(message)
@@ -378,12 +383,61 @@ async def _show_home(message: Message):
 async def _show_guide(message: Message):
     await message.answer(
         "📹 <b>XabarFlow — фойдаланиш қўлланмаси</b>\n\n"
-        "Қисқа ва батафсил видеоларда профилни улашдан бошлаб, "
-        "автоматик хабар юборишни ишга туширишгача кўрсатилган.\n\n"
+        "Видеоларда 1) профилни улаш, 2) гуруҳ қўшиш ва "
+        "3) хабарни ишга тушириш кўрсатилган.\n\n"
         "⚠️ QR-кодингизни ҳеч кимга юборманг.",
         parse_mode="HTML",
         reply_markup=guide_channel_kb(GUIDE_CHANNEL_URL),
     )
+
+
+def _user_issue_text(issue_type: str | None) -> str | None:
+    return {
+        "slow_mode": "⏳ Айрим гуруҳларда slow mode бор — бот вақти келганда ўзи юборади.",
+        "flood_wait": "⏳ Telegram бироз кутишни сўради — бот навбатни сақлаб турибди.",
+        "write_forbidden": "🔒 Айрим гуруҳларда ёзиш ҳуқуқи йўқ — улар автоматик тўхтатилган.",
+        "spam_restricted": "⛔️ Профилда Telegram spam чеклови бор. @SpamBot орқали текширинг.",
+        "suspected_spam": "⚠️ Telegram ёзишни рад этди. @SpamBot орқали ҳолатни текширинг.",
+        "profile": "⚠️ Telegram профилига уланишда муаммо бор. Профилни қайта уланг.",
+    }.get(issue_type)
+
+
+@router.message(F.text.in_(MY_STATUS_TEXTS))
+async def show_my_status(message: Message):
+    if not await _ensure_user_access(message):
+        return
+    status = await get_user_delivery_status(message.from_user.id)
+    settings_row = status["settings"]
+    until = await subscription_until(message.from_user.id)
+    running = bool(settings_row and settings_row.is_running)
+    text = (
+        "📊 <b>Ҳолатим</b>\n\n"
+        f"{'🟢 Ишлаётган' if running else '⏸ Тўхтатилган'}\n"
+        f"💳 Обуна: {_format_until(until)}\n"
+        f"👥 Фаол гуруҳлар: {status['active_groups']} та\n"
+        f"🔒 Ўчирилган гуруҳлар: {status['disabled_groups']} та\n"
+        f"⏱ Вақт: ҳар {_interval_label(settings_row.interval_minutes)}\n"
+    )
+    if status["next_run_at"]:
+        text += f"🕒 Кейинги айлана: {_format_until(status['next_run_at'])}\n"
+
+    report = status["report"]
+    if report:
+        waiting = max(0, report.active_groups - report.attempted_groups)
+        text += (
+            "\n📨 <b>Охирги юбориш</b>\n"
+            f"🕒 {_format_until(report.completed_at)}\n"
+            f"✅ Етиб борди: {report.delivered_groups} та\n"
+            f"⏳ Вақти келмаган: {waiting} та\n"
+            f"🔒 Ёзиш ҳуқуқи йўқ: {report.blocked_groups} та\n"
+        )
+    else:
+        text += "\n📨 Ҳали юбориш натижаси йўқ. «🚀 Старт / Стоп» орқали ишга туширинг.\n"
+
+    issue_text = _user_issue_text(status["issue_type"])
+    if issue_text:
+        text += f"\n{issue_text}"
+    await message.answer(text, parse_mode="HTML", reply_markup=await _main_kb(message))
 
 
 async def _show_payment_request(message: Message, state: FSMContext):

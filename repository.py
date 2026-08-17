@@ -6,7 +6,7 @@ from sqlalchemy import select, delete, exists, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, BroadcastReport, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
 from time_display import utc_now
 
 
@@ -300,6 +300,52 @@ async def get_group_success_times(profile: str) -> dict[int, datetime]:
             select(GroupSuccess).where(GroupSuccess.profile == profile)
         )
         return {row.chat_id: row.last_success_at for row in result.scalars().all()}
+
+
+async def save_broadcast_report(
+    profile: str,
+    *,
+    active_groups: int,
+    attempted_groups: int,
+    delivered_groups: int,
+    blocked_groups: int,
+) -> None:
+    """Upsert a concise result for the user's ``Holatim`` screen."""
+    async with async_session() as session:
+        report = await session.get(BroadcastReport, profile)
+        if report is None:
+            report = BroadcastReport(profile=profile)
+            session.add(report)
+        report.completed_at = utc_now()
+        report.active_groups = active_groups
+        report.attempted_groups = attempted_groups
+        report.delivered_groups = delivered_groups
+        report.blocked_groups = blocked_groups
+        await session.commit()
+
+
+async def get_user_delivery_status(user_id: int) -> dict:
+    """Return only user-safe status data; never expose Telegram session data."""
+    profile = user_profile_key(user_id)
+    async with async_session() as session:
+        settings = await session.get(Settings, profile)
+        job = await session.get(BroadcastJob, profile)
+        report = await session.get(BroadcastReport, profile)
+        issue = await session.get(BroadcastIssue, profile)
+        group_counts = await session.execute(
+            select(Group.send_enabled, func.count(Group.id))
+            .where(Group.profile == profile)
+            .group_by(Group.send_enabled)
+        )
+        counts = {bool(enabled): int(count) for enabled, count in group_counts.all()}
+        return {
+            "settings": settings,
+            "next_run_at": job.next_run_at if job and settings and settings.is_running else None,
+            "active_groups": counts.get(True, 0),
+            "disabled_groups": counts.get(False, 0),
+            "report": report,
+            "issue_type": issue.issue_type if issue else None,
+        }
 
 
 async def get_group_peer_targets(profile: str) -> dict[int, tuple[str, int | None]]:
