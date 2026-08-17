@@ -2068,7 +2068,18 @@ async def del_group_cb(callback: CallbackQuery):
 async def ask_message(message: Message, state: FSMContext):
     if not await _ensure_user_access(message, state):
         return
+    current = await get_settings(_key(message))
     await state.set_state(AdStates.waiting_message_text)
+    if current.message_text:
+        await message.answer("📝 <b>Ҳозир сақланган хабар:</b>", parse_mode="HTML")
+        # Stored text came from Telegram's HTML representation, so sending it
+        # separately preserves formatting and stays inside Telegram's limit.
+        await message.answer(current.message_text, parse_mode="HTML")
+        await message.answer(
+            "\n✏️ Ўзгартириш учун янги хабар матнини юборинг.\n"
+            "Ўзгартирмаслик учун бошқа керакли меню тугмасини босинг."
+        )
+        return
     await message.answer("💬 Гуруҳларга юбориладиган хабар матнини юборинг.")
 
 
