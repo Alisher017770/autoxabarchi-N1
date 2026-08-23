@@ -6,12 +6,20 @@ from config import DATABASE_URL
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL muhit o'zgaruvchisi to'ldirilmagan.")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+# Railway/Postgres can close an idle TCP connection during a deploy or a brief
+# database restart. Validate pooled connections before handing them to a worker
+# instead of letting a stale connection stop the broadcast queue.
+engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 class Base(DeclarativeBase):
     pass
+
+
+async def reset_database_connections() -> None:
+    """Discard this process's stale database pool; the next query reconnects."""
+    await engine.dispose()
 
 
 async def init_db():

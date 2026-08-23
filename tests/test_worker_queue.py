@@ -1,10 +1,12 @@
+import asyncio
 import unittest
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import repository
+import broadcaster
 from db import Base
 from models import BroadcastJob, Group, GroupCooldown, GroupSuccess, Settings
 
@@ -125,6 +127,23 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, status["disabled_groups"])
         self.assertEqual(1, status["report"].delivered_groups)
         self.assertIsNotNone(status["next_run_at"])
+
+    async def test_worker_retries_after_a_closed_database_connection(self):
+        with (
+            patch.object(
+                broadcaster,
+                "prepare_running_broadcast_jobs",
+                AsyncMock(side_effect=[RuntimeError("connection is closed"), asyncio.CancelledError()]),
+            ),
+            patch.object(broadcaster, "reset_database_connections", AsyncMock()) as reset_pool,
+            patch.object(broadcaster, "save_admin_error", AsyncMock()) as save_error,
+            patch.object(broadcaster.asyncio, "sleep", AsyncMock()),
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                await broadcaster._worker_loop()
+
+        reset_pool.assert_awaited_once()
+        save_error.assert_awaited_once()
 
 
 if __name__ == "__main__":

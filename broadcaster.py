@@ -32,6 +32,7 @@ from config import (
     REST_EVERY_MINUTES,
 )
 from time_display import utc_now
+from db import reset_database_connections
 from repository import (
     clear_broadcast_issue,
     clear_group_cooldown,
@@ -622,25 +623,47 @@ async def _process_broadcast_job(job) -> None:
 
 
 async def _worker_loop() -> None:
-    created = await prepare_running_broadcast_jobs(
-        delay_seconds=BROADCAST_RESUME_DELAY_SECONDS,
-        rest_every_minutes=REST_EVERY_MINUTES,
-    )
-    if created:
-        logger.info("%s ta avvalgi faol profil worker navbatiga qo'shildi", created)
     logger.info("Yashirin broadcast worker ishga tushdi: %s", _worker_owner)
+    initialized = False
     while True:
-        free_slots = max(0, BROADCAST_CONCURRENCY - len(_tasks))
-        if free_slots:
-            jobs = await claim_due_broadcast_jobs(
-                _worker_owner,
-                limit=free_slots,
-                lease_seconds=BROADCAST_LEASE_SECONDS,
+        try:
+            if not initialized:
+                created = await prepare_running_broadcast_jobs(
+                    delay_seconds=BROADCAST_RESUME_DELAY_SECONDS,
+                    rest_every_minutes=REST_EVERY_MINUTES,
+                )
+                if created:
+                    logger.info("%s ta avvalgi faol profil worker navbatiga qo'shildi", created)
+                initialized = True
+
+            free_slots = max(0, BROADCAST_CONCURRENCY - len(_tasks))
+            if free_slots:
+                jobs = await claim_due_broadcast_jobs(
+                    _worker_owner,
+                    limit=free_slots,
+                    lease_seconds=BROADCAST_LEASE_SECONDS,
+                )
+                for job in jobs:
+                    if job.profile not in _tasks:
+                        _tasks[job.profile] = asyncio.create_task(_process_broadcast_job(job))
+            await asyncio.sleep(BROADCAST_WORKER_POLL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # A temporary database outage must not terminate this long-lived
+            # service. Drop stale pooled connections and retry shortly.
+            logger.exception("Worker navbatida vaqtinchalik xato; qayta ulaniladi")
+            initialized = False
+            try:
+                await reset_database_connections()
+            except Exception:
+                logger.exception("Worker bazaviy ulanishlarini tozalab bo'lmadi")
+            await save_admin_error(
+                f"worker-queue:{type(exc).__name__}",
+                "Яширин worker базага уланишда хато қилди",
+                exc,
             )
-            for job in jobs:
-                if job.profile not in _tasks:
-                    _tasks[job.profile] = asyncio.create_task(_process_broadcast_job(job))
-        await asyncio.sleep(BROADCAST_WORKER_POLL_SECONDS)
+            await asyncio.sleep(10)
 
 
 async def start_broadcast(profile: str, *, bypass_spam_lock: bool = False) -> tuple[bool, str | None]:
