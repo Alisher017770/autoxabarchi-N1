@@ -43,6 +43,11 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
                 Exception("RPCError 403: CHAT_SEND_PLAIN_FORBIDDEN")
             )
         )
+        self.assertTrue(
+            broadcaster._is_write_forbidden_error(
+                Exception("ChannelPrivateError: CHANNEL_PRIVATE")
+            )
+        )
         self.assertFalse(broadcaster._is_write_forbidden_error(Exception("temporary network error")))
 
     async def test_stops_records_and_notifies_restricted_profile(self):
