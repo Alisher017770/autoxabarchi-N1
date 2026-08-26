@@ -73,9 +73,8 @@ _peer_hydration_slots = asyncio.Semaphore(3)
 REST_EVERY_SECONDS = REST_EVERY_MINUTES * 60
 REST_DURATION_SECONDS = REST_DURATION_MINUTES * 60
 MAX_RUN_SECONDS = MAX_RUN_MINUTES * 60
-MIN_FORBIDDEN_ATTEMPTS_TO_STOP = 5
 SPAM_RECHECK_GROUP_LIMIT = 5
-SPAM_LOCK_ISSUE_TYPES = {"spam_restricted", "suspected_spam"}
+SPAM_LOCK_ISSUE_TYPES = {"spam_restricted"}
 
 SPAM_ERROR_MARKERS = (
     "PEER_FLOOD",
@@ -158,14 +157,6 @@ async def _hydrate_missing_group_peers(client, profile: str, groups, peer_target
     await save_group_peers(profile, discovered)
 
 
-def _all_attempts_write_forbidden(attempted: int, sent: int, write_forbidden: int) -> bool:
-    return (
-        attempted >= MIN_FORBIDDEN_ATTEMPTS_TO_STOP
-        and sent == 0
-        and write_forbidden == attempted
-    )
-
-
 def spam_check_keyboard(profile: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -207,40 +198,6 @@ async def _stop_spam_restricted_profile(profile: str, exc: Exception) -> None:
             )
         except Exception:
             logger.exception("[%s] spam cheklovi haqida adminga xabar yuborilmadi", profile)
-
-
-async def _stop_all_groups_forbidden(profile: str, attempted: int) -> None:
-    details = f"{attempted} та гуруҳнинг барчаси хабар юборишни рад этди; юборилди: 0 та"
-    await set_broadcast_issue(profile, "suspected_spam", details)
-    await set_running(profile, False)
-    logger.error("[%s] %s/%s гуруҳга юборилмади, тарқатиш тўхтатилди", profile, attempted, attempted)
-
-    if _notification_bot is None:
-        return
-
-    try:
-        await _notification_bot.send_message(
-            int(profile),
-            "⛔️ Хабар юбориш автоматик тўхтатилди.\n\n"
-            f"Натижа: 0/{attempted} та гуруҳга юборилди. Барча гуруҳлар ёзишни рад этди. "
-            "Telegram аниқ spam кодини бермади, аммо профилда spam чеклови бўлиши мумкин. "
-            "@SpamBot ҳолатини текширинг, кейин «🔄 Қайта текшириш»ни босинг.",
-            reply_markup=spam_check_keyboard(profile),
-        )
-    except Exception:
-        logger.exception("[%s] умумий ёзиш чеклови ҳақида фойдаланувчига хабар берилмади", profile)
-
-    if ADMIN_ID and ADMIN_ID != int(profile):
-        try:
-            await _notification_bot.send_message(
-                ADMIN_ID,
-                "⚠️ Эҳтимолий spam чекловидаги профил автоматик тўхтатилди.\n"
-                f"Фойдаланувчи ID: {profile}\n"
-                f"Натижа: 0/{attempted} та гуруҳга юборилди.\n\n"
-                "Профил «⚠️ Муаммоли профиллар» бўлимига қўшилди.",
-            )
-        except Exception:
-            logger.exception("[%s] умумий ёзиш чеклови ҳақида админга хабар берилмади", profile)
 
 
 async def _limited_sleep(profile: str, seconds: float, started_at: float, next_rest_at: float) -> tuple[float, bool]:

@@ -8,9 +8,9 @@ def is_high_spam_risk_interval(minutes: int) -> bool:
 
 def low_interval_warning_text(minutes: int, *, already_running: bool = False) -> str:
     status = (
-        "Хабар юбориш ҳозирча тўхтатилмайди."
+        "Хабар юбориш танланган вақтда давом этади."
         if already_running
-        else f"Сиз танлаган {minutes} дақиқалик вақт сақланди."
+        else f"Сиз танлаган {minutes} дақиқалик вақт сақланди ва бот уни бекор қилмайди."
     )
     return (
         "⚠️ <b>Spam хавфи юқори!</b>\n\n"
@@ -18,5 +18,8 @@ def low_interval_warning_text(minutes: int, *, already_running: bool = False) ->
         "Telegram чекловига тушиш эҳтимолини оширади.\n\n"
         "🛡 <b>Тавсия этилган вақт: 10–15 дақиқа.</b>\n"
         f"{status}\n\n"
+        "❗️Паст вақтни танлаш ва Telegram чеклови хавфи учун жавобгарлик "
+        "фойдаланувчининг ўзида. Telegram профилга аниқ чеклов қўйса, "
+        "чеклов очилмагунча хабар юбориб бўлмайди.\n\n"
         "Вақтни «⚙️ Созламалар → ⏱ Вақт» бўлимидан ўзгартиришингиз мумкин."
     )

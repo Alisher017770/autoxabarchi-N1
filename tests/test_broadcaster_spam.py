@@ -45,12 +45,6 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(broadcaster._is_write_forbidden_error(Exception("temporary network error")))
 
-    def test_stops_only_when_every_attempt_is_write_forbidden(self):
-        self.assertTrue(broadcaster._all_attempts_write_forbidden(22, 0, 22))
-        self.assertFalse(broadcaster._all_attempts_write_forbidden(4, 0, 4))
-        self.assertFalse(broadcaster._all_attempts_write_forbidden(22, 1, 21))
-        self.assertFalse(broadcaster._all_attempts_write_forbidden(22, 0, 21))
-
     async def test_stops_records_and_notifies_restricted_profile(self):
         bot = AsyncMock()
         broadcaster.configure_broadcaster_bot(bot)
@@ -69,22 +63,6 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.send_message.await_args_list[0].args[0], 123)
         self.assertEqual(bot.send_message.await_args_list[1].args[0], 999)
 
-    async def test_stops_and_notifies_when_all_groups_forbid_writing(self):
-        bot = AsyncMock()
-        broadcaster.configure_broadcaster_bot(bot)
-
-        with (
-            patch.object(broadcaster, "set_broadcast_issue", new=AsyncMock()) as set_issue,
-            patch.object(broadcaster, "set_running", new=AsyncMock()) as set_running,
-            patch.object(broadcaster, "ADMIN_ID", 999),
-        ):
-            await broadcaster._stop_all_groups_forbidden("123", 22)
-
-        self.assertEqual(set_issue.await_args.args[:2], ("123", "suspected_spam"))
-        set_running.assert_awaited_once_with("123", False)
-        self.assertEqual(bot.send_message.await_count, 2)
-        self.assertIn("0/22", bot.send_message.await_args_list[0].args[1])
-
     async def test_start_does_not_claim_success_when_profile_connection_fails(self):
         connection_error = RuntimeError("Профилни қайта уланг.")
         with (
@@ -101,7 +79,7 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
         set_running.assert_awaited_once_with("321", False)
 
     async def test_normal_start_is_blocked_until_spam_recheck(self):
-        issue = SimpleNamespace(issue_type="suspected_spam")
+        issue = SimpleNamespace(issue_type="spam_restricted")
         with (
             patch.object(broadcaster, "get_broadcast_issue", new=AsyncMock(return_value=issue)),
             patch.object(broadcaster, "set_running", new=AsyncMock()) as set_running,
@@ -114,8 +92,25 @@ class SpamRestrictionTests(unittest.IsolatedAsyncioTestCase):
         set_running.assert_awaited_once_with("654", False)
         get_client.assert_not_awaited()
 
-    async def test_successful_spam_recheck_unlocks_and_restarts(self):
+    async def test_legacy_suspected_spam_does_not_block_start(self):
         issue = SimpleNamespace(issue_type="suspected_spam")
+        client = AsyncMock()
+        with (
+            patch.object(broadcaster, "get_broadcast_issue", new=AsyncMock(return_value=issue)),
+            patch.object(broadcaster, "get_user_client", new=AsyncMock(return_value=client)),
+            patch.object(broadcaster, "release_user_client", new=AsyncMock()),
+            patch.object(broadcaster, "schedule_broadcast_start", new=AsyncMock()) as schedule,
+            patch.object(broadcaster, "set_running", new=AsyncMock()) as set_running,
+        ):
+            started, error = await broadcaster.start_broadcast("654")
+
+        self.assertTrue(started)
+        self.assertIsNone(error)
+        schedule.assert_awaited_once()
+        set_running.assert_not_awaited()
+
+    async def test_successful_spam_recheck_unlocks_and_restarts(self):
+        issue = SimpleNamespace(issue_type="spam_restricted")
         settings = SimpleNamespace(message_text="test", interval_minutes=15)
         group = SimpleNamespace(chat_id=-1001, title="Test group")
         client = AsyncMock()

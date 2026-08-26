@@ -14,6 +14,13 @@ class IntervalSafetyTests(unittest.TestCase):
         warning = low_interval_warning_text(5)
         self.assertIn("Spam хавфи юқори", warning)
         self.assertIn("10–15 дақиқа", warning)
+        self.assertIn("бот уни бекор қилмайди", warning)
+        self.assertIn("жавобгарлик фойдаланувчининг ўзида", warning)
+
+    def test_running_warning_does_not_claim_the_broadcast_was_stopped(self):
+        warning = low_interval_warning_text(3, already_running=True)
+        self.assertIn("давом этади", warning)
+        self.assertNotIn("автоматик тўхтатилди", warning)
 
 
 if __name__ == "__main__":

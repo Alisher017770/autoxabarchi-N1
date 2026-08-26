@@ -2130,7 +2130,7 @@ async def show_interval(message: Message):
     await message.answer(
         "⏱ Хабар юбориш вақтини танланг:\n\n"
         f"Ҳозирги: {_interval_label(settings_row.interval_minutes)}\n\n"
-        "⚠️ 5 дақиқа — spam хавфи юқори\n"
+        "⚠️ 2, 3, 5 ва 7 дақиқа — spam хавфи юқори, лекин танлаш мумкин\n"
         "🛡 Тавсия — ҳар 10–15 дақиқа\n"
         "🐢 Секин - ҳар 30 дақиқа\n\n"
         "Бот хавфсизлик учун ҳар 6 соатда 20 дақиқа дам олади ва 12 соатдан кейин ўзи тўхтайди.",
@@ -2236,6 +2236,12 @@ async def start_or_stop(message: Message, state: FSMContext):
         "⏹ 12 соатдан кейин автоматик тўхтайди. Қайта бошлаш учун «🚀 Старт / Стоп» ни босинг.",
         reply_markup=await _main_kb(message),
     )
+    if is_high_spam_risk_interval(settings_row.interval_minutes):
+        await message.answer(
+            low_interval_warning_text(settings_row.interval_minutes, already_running=True),
+            parse_mode="HTML",
+            reply_markup=await _main_kb(message),
+        )
 
 
 @router.callback_query(F.data.startswith("retryspam:"))
