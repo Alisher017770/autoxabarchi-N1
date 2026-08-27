@@ -1,6 +1,6 @@
 from urllib.parse import quote
 
-from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import INTERVAL_OPTIONS
@@ -186,6 +186,22 @@ def dialog_pick_kb(dialogs: list[dict]) -> InlineKeyboardMarkup:
         kb.button(text=f"👥 {dialog['title'][:35]}", callback_data=f"addgroup:{dialog['chat_id']}")
     kb.adjust(1)
     return kb.as_markup()
+
+
+def group_card_kb(chat_id: int, index: int, total: int) -> InlineKeyboardMarkup:
+    """Navigation for the optional, reversible group-photo preview."""
+    rows: list[list[InlineKeyboardButton]] = []
+    navigation: list[InlineKeyboardButton] = []
+    if index > 0:
+        navigation.append(InlineKeyboardButton(text="⬅️ Олдинги", callback_data=f"groupcard:{index - 1}"))
+    if index + 1 < total:
+        navigation.append(InlineKeyboardButton(text="Кейинги ➡️", callback_data=f"groupcard:{index + 1}"))
+    if navigation:
+        rows.append(navigation)
+    rows.append([InlineKeyboardButton(text="✅ Шу гуруҳни қўшиш", callback_data=f"addgroup:{chat_id}")])
+    rows.append([InlineKeyboardButton(text="✅ Барчасини қўшиш", callback_data="addallgroups")])
+    rows.append([InlineKeyboardButton(text="📋 Эски рўйхат кўриниши", callback_data="grouplistmode")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def group_delete_kb(groups: list) -> InlineKeyboardMarkup:

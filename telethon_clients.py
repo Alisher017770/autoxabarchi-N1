@@ -5,7 +5,7 @@ import logging
 import math
 import time
 
-from telethon import TelegramClient
+from telethon import TelegramClient, utils as telethon_utils
 from telethon.errors import AuthKeyDuplicatedError, PhoneCodeInvalidError, SessionPasswordNeededError
 from telethon.errors.common import AuthKeyNotFound
 from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
@@ -376,6 +376,34 @@ async def get_user_dialog_groups(user_id: int) -> list[dict]:
         await release_user_client(user_id)
     logger.info("[%s] Telegram dialogs scanned: %s; groups found: %s", user_id, scanned_dialogs, len(groups))
     return groups
+
+
+async def get_user_group_photo(
+    user_id: int,
+    chat_id: int,
+    peer_type: str | None = None,
+    access_hash: int | None = None,
+) -> bytes | None:
+    """Download one group avatar without keeping the user's session connected."""
+    client = await get_user_client(user_id)
+    try:
+        async with asyncio.timeout(CONNECT_TIMEOUT_SECONDS):
+            real_id, _peer_class = telethon_utils.resolve_id(chat_id)
+            if peer_type == "channel" and access_hash is not None:
+                target = InputPeerChannel(real_id, int(access_hash))
+            elif peer_type == "chat":
+                target = InputPeerChat(real_id)
+            else:
+                target = chat_id
+            entity = await client.get_entity(target)
+            photo = await client.download_profile_photo(entity, file=bytes)
+            return bytes(photo) if photo else None
+    except Exception as exc:
+        # A missing/forbidden avatar is cosmetic and must never block group adding.
+        logger.info("[%s] Group %s photo is unavailable: %s", user_id, chat_id, exc)
+        return None
+    finally:
+        await release_user_client(user_id)
 
 
 async def disconnect_all():

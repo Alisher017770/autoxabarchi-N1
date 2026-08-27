@@ -66,6 +66,9 @@ BASE_DIR = Path(__file__).resolve().parent
 WELCOME_IMAGE_PATH = os.getenv("WELCOME_IMAGE_PATH", str(BASE_DIR / "assets" / "welcome.png"))
 WELCOME_STICKER_ID = os.getenv("WELCOME_STICKER_ID", "")
 GUIDE_CHANNEL_URL = os.getenv("GUIDE_CHANNEL_URL", "https://t.me/+epn0LWo8lO4zYjY6")
+GROUP_CARD_PREVIEW_ENABLED = os.getenv("GROUP_CARD_PREVIEW_ENABLED", "true").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 
 def validate_config() -> None:

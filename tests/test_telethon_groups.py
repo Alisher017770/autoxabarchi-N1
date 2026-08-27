@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from telethon_clients import get_user_dialog_groups, group_allows_text_messages
+from telethon_clients import get_user_dialog_groups, get_user_group_photo, group_allows_text_messages
 
 
 class FakeClient:
@@ -14,6 +14,14 @@ class FakeClient:
         self.iter_dialogs_kwargs = kwargs
         for dialog in self.dialogs:
             yield dialog
+
+
+class FakePhotoClient:
+    async def get_entity(self, chat_id):
+        return SimpleNamespace(id=chat_id)
+
+    async def download_profile_photo(self, entity, file):
+        return b"group-photo"
 
 
 class TelegramGroupTests(unittest.IsolatedAsyncioTestCase):
@@ -39,6 +47,17 @@ class TelegramGroupTests(unittest.IsolatedAsyncioTestCase):
             {"limit": None, "ignore_migrated": True},
             client.iter_dialogs_kwargs,
         )
+
+    async def test_downloads_group_photo_and_releases_profile(self):
+        release = AsyncMock()
+        with (
+            patch("telethon_clients.get_user_client", new=AsyncMock(return_value=FakePhotoClient())),
+            patch("telethon_clients.release_user_client", new=release),
+        ):
+            photo = await get_user_group_photo(8389750983, -100123)
+
+        self.assertEqual(b"group-photo", photo)
+        release.assert_awaited_once_with(8389750983)
 
 
 if __name__ == "__main__":

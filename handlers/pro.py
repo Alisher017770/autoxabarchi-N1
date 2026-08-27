@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation
 import html
 from io import BytesIO
 import logging
+from pathlib import Path
 import re
 
 import qrcode
@@ -11,15 +12,17 @@ from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, InputMediaPhoto, Message
 
 from admin_alerts import save_admin_error
 from broadcaster import retry_spam_check, spam_check_keyboard, start_broadcast, stop_broadcast
 from config import (
     ADMIN_ID,
     BOT_BRAND,
+    GROUP_CARD_PREVIEW_ENABLED,
     GUIDE_CHANNEL_URL,
     SUBSCRIPTION_DAYS,
+    WELCOME_IMAGE_PATH,
     WELCOME_STICKER_ID,
 )
 from keyboards import (
@@ -36,6 +39,7 @@ from keyboards import (
     expiring_users_kb,
     finance_kb,
     group_delete_kb,
+    group_card_kb,
     groups_kb,
     guide_channel_kb,
     interval_kb,
@@ -108,6 +112,7 @@ from telethon_clients import (
     finish_qr_login,
     get_user_client,
     get_user_dialog_groups,
+    get_user_group_photo,
     release_user_client,
     login_code_next_delivery_text,
     resend_login_code,
@@ -130,6 +135,8 @@ SUBSCRIBER_THANKS_TEXT = (
 )
 _audience_broadcasts_running: set[str] = set()
 _admin_ids: set[int] = {ADMIN_ID}
+_group_card_dialogs: dict[int, list[dict]] = {}
+GROUP_CARD_LIMIT = 30
 
 ADMIN_USERS_TEXTS = {"👥 Фойдаланувчилар", "Фойдаланувчилар", "👥 Userlar", "Userlar"}
 SUBSCRIBED_USERS_TEXTS = {"✅ Обуна бўлганлар", "✅ Obuna bo'lganlar"}
@@ -1943,27 +1950,123 @@ async def groups_list(message: Message):
     await message.answer("📋 Сақланган гуруҳлар:\n\n" + "\n".join(f"- {group.title}" for group in groups))
 
 
+async def _new_group_dialogs(user_id: int) -> list[dict]:
+    dialogs = await get_user_dialog_groups(user_id)
+    existing = {group.chat_id for group in await list_groups(user_profile_key(user_id))}
+    return [
+        dialog
+        for dialog in dialogs
+        if dialog["chat_id"] not in existing and dialog.get("text_allowed", True)
+    ][:GROUP_CARD_LIMIT]
+
+
+def _group_card_caption(dialog: dict, index: int, total: int) -> str:
+    title = html.escape(str(dialog.get("title") or "Номсиз гуруҳ"))
+    return (
+        f"👥 <b>Гуруҳ {index + 1}/{total}</b>\n\n"
+        f"<b>{title}</b>\n\n"
+        "✅ Матнли хабар юбориш мумкин\n"
+        "Қўшиш учун пастдаги тугмани босинг."
+    )
+
+
+async def _group_card_photo(user_id: int, dialog: dict) -> BufferedInputFile:
+    photo = await get_user_group_photo(
+        user_id,
+        int(dialog["chat_id"]),
+        dialog.get("peer_type"),
+        dialog.get("access_hash"),
+    )
+    if photo:
+        return BufferedInputFile(photo, filename="group-photo.jpg")
+    return BufferedInputFile(Path(WELCOME_IMAGE_PATH).read_bytes(), filename="tashkent-flow.png")
+
+
+async def _show_group_card(message: Message, user_id: int, dialogs: list[dict], index: int, *, edit: bool) -> None:
+    if not dialogs:
+        await message.answer("Қўшиладиган янги гуруҳ топилмади.")
+        return
+    index = max(0, min(index, len(dialogs) - 1))
+    dialog = dialogs[index]
+    photo = await _group_card_photo(user_id, dialog)
+    caption = _group_card_caption(dialog, index, len(dialogs))
+    markup = group_card_kb(int(dialog["chat_id"]), index, len(dialogs))
+    if edit:
+        try:
+            await message.edit_media(
+                InputMediaPhoto(media=photo, caption=caption),
+                reply_markup=markup,
+            )
+            return
+        except Exception as exc:
+            logger.info("Group card could not be edited, sending a new one: %s", exc)
+    await message.answer_photo(photo, caption=caption, reply_markup=markup)
+
+
 @router.message(F.text.in_(GROUP_ADD_TEXTS))
 async def groups_add(message: Message):
     if not await _ensure_user_access(message):
         return
-    await message.answer("⏳ Гуруҳлар олинмоқда...")
+    progress = await message.answer("⏳ Гуруҳлар олинмоқда...")
     try:
-        dialogs = await get_user_dialog_groups(message.from_user.id)
+        new_dialogs = await _new_group_dialogs(message.from_user.id)
     except RuntimeError as exc:
         await message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
         return
-
-    existing = {group.chat_id for group in await list_groups(_key(message))}
-    new_dialogs = [
-        dialog
-        for dialog in dialogs
-        if dialog["chat_id"] not in existing and dialog.get("text_allowed", True)
-    ]
+    try:
+        await progress.delete()
+    except Exception:
+        pass
     if not new_dialogs:
         await message.answer("Қўшиладиган янги гуруҳ топилмади.")
         return
-    await message.answer("➕ Қайси гуруҳни қўшамиз?", reply_markup=dialog_pick_kb(new_dialogs[:30]))
+    _group_card_dialogs[message.from_user.id] = new_dialogs
+    if GROUP_CARD_PREVIEW_ENABLED:
+        await _show_group_card(message, message.from_user.id, new_dialogs, 0, edit=False)
+    else:
+        await message.answer("➕ Қайси гуруҳни қўшамиз?", reply_markup=dialog_pick_kb(new_dialogs))
+
+
+@router.callback_query(F.data.startswith("groupcard:"))
+async def group_card_navigate(callback: CallbackQuery):
+    try:
+        index = int(callback.data.split(":", 1)[1])
+    except (TypeError, ValueError):
+        await callback.answer("Нотўғри саҳифа", show_alert=True)
+        return
+    dialogs = _group_card_dialogs.get(callback.from_user.id)
+    if not dialogs:
+        try:
+            dialogs = await _new_group_dialogs(callback.from_user.id)
+        except RuntimeError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        _group_card_dialogs[callback.from_user.id] = dialogs
+    await _show_group_card(callback.message, callback.from_user.id, dialogs, index, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "grouplistmode")
+async def group_list_mode(callback: CallbackQuery):
+    dialogs = _group_card_dialogs.get(callback.from_user.id)
+    if not dialogs:
+        try:
+            dialogs = await _new_group_dialogs(callback.from_user.id)
+        except RuntimeError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+    if not dialogs:
+        await callback.answer("Қўшиладиган янги гуруҳ йўқ", show_alert=True)
+        return
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.message.answer(
+        "➕ Эски рўйхат кўриниши:",
+        reply_markup=dialog_pick_kb(dialogs),
+    )
+    await callback.answer("Эски кўриниш очилди")
 
 
 @router.message(F.text.in_(GROUP_ADD_ALL_TEXTS))
@@ -2011,6 +2114,27 @@ async def add_group_cb(callback: CallbackQuery):
     added = await add_group(user_profile_key(callback.from_user.id), chat_id, title)
     await callback.answer("Қўшилди" if added else "Аллақачон бор")
     groups = await list_groups(user_profile_key(callback.from_user.id))
+    card_dialogs = _group_card_dialogs.get(callback.from_user.id)
+    if GROUP_CARD_PREVIEW_ENABLED and callback.message.photo and card_dialogs:
+        old_index = next(
+            (index for index, item in enumerate(card_dialogs) if int(item["chat_id"]) == chat_id),
+            0,
+        )
+        remaining = [item for item in card_dialogs if int(item["chat_id"]) != chat_id]
+        _group_card_dialogs[callback.from_user.id] = remaining
+        if remaining:
+            await _show_group_card(
+                callback.message,
+                callback.from_user.id,
+                remaining,
+                min(old_index, len(remaining) - 1),
+                edit=True,
+            )
+            return
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
     await callback.message.answer(
         f"✅ {len(groups)} та гуруҳ сақланди.\n\n"
         "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
@@ -2035,6 +2159,12 @@ async def add_all_groups_cb(callback: CallbackQuery):
         if await add_group(user_profile_key(callback.from_user.id), dialog["chat_id"], dialog["title"]):
             added_count += 1
     groups = await list_groups(user_profile_key(callback.from_user.id))
+    _group_card_dialogs.pop(callback.from_user.id, None)
+    if callback.message.photo:
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
     if skipped_count:
         await callback.message.answer(
             f"🔒 {skipped_count} ta guruhda matn yozish mumkin emas, ular qo'shilmadi."
