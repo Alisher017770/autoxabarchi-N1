@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 
 import qrcode
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import Command
@@ -112,7 +113,7 @@ from telethon_clients import (
     finish_qr_login,
     get_user_client,
     get_user_dialog_groups,
-    get_user_group_photo,
+    get_user_group_photos,
     release_user_client,
     login_code_next_delivery_text,
     resend_login_code,
@@ -137,6 +138,7 @@ _audience_broadcasts_running: set[str] = set()
 _admin_ids: set[int] = {ADMIN_ID}
 _group_card_dialogs: dict[int, list[dict]] = {}
 GROUP_CARD_LIMIT = 30
+GROUP_CARD_PAGE_SIZE = 4
 
 ADMIN_USERS_TEXTS = {"👥 Фойдаланувчилар", "Фойдаланувчилар", "👥 Userlar", "Userlar"}
 SUBSCRIBED_USERS_TEXTS = {"✅ Обуна бўлганлар", "✅ Obuna bo'lganlar"}
@@ -1960,26 +1962,58 @@ async def _new_group_dialogs(user_id: int) -> list[dict]:
     ][:GROUP_CARD_LIMIT]
 
 
-def _group_card_caption(dialog: dict, index: int, total: int) -> str:
-    title = html.escape(str(dialog.get("title") or "Номсиз гуруҳ"))
-    return (
-        f"👥 <b>Гуруҳ {index + 1}/{total}</b>\n\n"
-        f"<b>{title}</b>\n\n"
-        "✅ Матнли хабар юбориш мумкин\n"
-        "Қўшиш учун пастдаги тугмани босинг."
-    )
+def _group_card_caption(dialogs: list[dict], index: int, total: int) -> str:
+    lines = [f"👥 <b>Гуруҳлар {index + 1}–{index + len(dialogs)} / {total}</b>", ""]
+    for number, dialog in enumerate(dialogs, start=1):
+        title = html.escape(str(dialog.get("title") or "Номсиз гуруҳ"))
+        lines.append(f"{number}️⃣ {title}")
+    lines.extend(["", "Керакли рақамдаги «Қўшиш» тугмасини босинг."])
+    return "\n".join(lines)
 
 
-async def _group_card_photo(user_id: int, dialog: dict) -> BufferedInputFile:
-    photo = await get_user_group_photo(
-        user_id,
-        int(dialog["chat_id"]),
-        dialog.get("peer_type"),
-        dialog.get("access_hash"),
-    )
-    if photo:
-        return BufferedInputFile(photo, filename="group-photo.jpg")
-    return BufferedInputFile(Path(WELCOME_IMAGE_PATH).read_bytes(), filename="tashkent-flow.png")
+def _number_font() -> ImageFont.ImageFont:
+    for path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+    ):
+        try:
+            return ImageFont.truetype(path, 38)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _group_photo_grid(photos: list[bytes | None]) -> bytes:
+    fallback = Path(WELCOME_IMAGE_PATH).read_bytes()
+    canvas = Image.new("RGB", (640, 360), "#101510")
+    draw = ImageDraw.Draw(canvas)
+    font = _number_font()
+    positions = ((0, 0), (320, 0), (0, 180), (320, 180))
+    for number, (photo, position) in enumerate(zip(photos, positions), start=1):
+        try:
+            source = Image.open(BytesIO(photo or fallback)).convert("RGB")
+            tile = ImageOps.fit(source, (320, 180), method=Image.Resampling.LANCZOS)
+        except Exception:
+            tile = Image.new("RGB", (320, 180), "#173d20")
+        canvas.paste(tile, position)
+        x, y = position
+        draw.ellipse((x + 12, y + 12, x + 64, y + 64), fill="#16b83e", outline="white", width=2)
+        label = str(number)
+        box = draw.textbbox((0, 0), label, font=font)
+        draw.text(
+            (x + 38 - (box[2] - box[0]) / 2, y + 38 - (box[3] - box[1]) / 2 - box[1]),
+            label,
+            fill="white",
+            font=font,
+        )
+    output = BytesIO()
+    canvas.save(output, format="JPEG", quality=86, optimize=True)
+    return output.getvalue()
+
+
+async def _group_card_photo(user_id: int, dialogs: list[dict]) -> BufferedInputFile:
+    photos = await get_user_group_photos(user_id, dialogs)
+    return BufferedInputFile(_group_photo_grid(photos), filename="group-grid.jpg")
 
 
 async def _show_group_card(message: Message, user_id: int, dialogs: list[dict], index: int, *, edit: bool) -> None:
@@ -1987,20 +2021,21 @@ async def _show_group_card(message: Message, user_id: int, dialogs: list[dict], 
         await message.answer("Қўшиладиган янги гуруҳ топилмади.")
         return
     index = max(0, min(index, len(dialogs) - 1))
-    dialog = dialogs[index]
-    photo = await _group_card_photo(user_id, dialog)
-    caption = _group_card_caption(dialog, index, len(dialogs))
-    markup = group_card_kb(int(dialog["chat_id"]), index, len(dialogs))
+    index = (index // GROUP_CARD_PAGE_SIZE) * GROUP_CARD_PAGE_SIZE
+    page = dialogs[index:index + GROUP_CARD_PAGE_SIZE]
+    photo = await _group_card_photo(user_id, page)
+    caption = _group_card_caption(page, index, len(dialogs))
+    markup = group_card_kb(page, index, len(dialogs))
     if edit:
         try:
             await message.edit_media(
-                InputMediaPhoto(media=photo, caption=caption),
+                InputMediaPhoto(media=photo, caption=caption, parse_mode="HTML"),
                 reply_markup=markup,
             )
             return
         except Exception as exc:
             logger.info("Group card could not be edited, sending a new one: %s", exc)
-    await message.answer_photo(photo, caption=caption, reply_markup=markup)
+    await message.answer_photo(photo, caption=caption, reply_markup=markup, parse_mode="HTML")
 
 
 @router.message(F.text.in_(GROUP_ADD_TEXTS))

@@ -188,17 +188,25 @@ def dialog_pick_kb(dialogs: list[dict]) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def group_card_kb(chat_id: int, index: int, total: int) -> InlineKeyboardMarkup:
-    """Navigation for the optional, reversible group-photo preview."""
+def group_card_kb(dialogs: list[dict], index: int, total: int) -> InlineKeyboardMarkup:
+    """Navigation and numbered add buttons for a four-group photo grid."""
     rows: list[list[InlineKeyboardButton]] = []
     navigation: list[InlineKeyboardButton] = []
     if index > 0:
-        navigation.append(InlineKeyboardButton(text="⬅️ Олдинги", callback_data=f"groupcard:{index - 1}"))
-    if index + 1 < total:
-        navigation.append(InlineKeyboardButton(text="Кейинги ➡️", callback_data=f"groupcard:{index + 1}"))
+        navigation.append(InlineKeyboardButton(text="⬅️ Олдинги", callback_data=f"groupcard:{max(0, index - 4)}"))
+    if index + len(dialogs) < total:
+        navigation.append(InlineKeyboardButton(text="Кейинги ➡️", callback_data=f"groupcard:{index + 4}"))
     if navigation:
         rows.append(navigation)
-    rows.append([InlineKeyboardButton(text="✅ Шу гуруҳни қўшиш", callback_data=f"addgroup:{chat_id}")])
+    add_buttons = [
+        InlineKeyboardButton(
+            text=f"{number}️⃣ Қўшиш",
+            callback_data=f"addgroup:{int(dialog['chat_id'])}",
+        )
+        for number, dialog in enumerate(dialogs, start=1)
+    ]
+    for offset in range(0, len(add_buttons), 2):
+        rows.append(add_buttons[offset:offset + 2])
     rows.append([InlineKeyboardButton(text="✅ Барчасини қўшиш", callback_data="addallgroups")])
     rows.append([InlineKeyboardButton(text="📋 Эски рўйхат кўриниши", callback_data="grouplistmode")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -406,6 +406,35 @@ async def get_user_group_photo(
         await release_user_client(user_id)
 
 
+async def get_user_group_photos(user_id: int, dialogs: list[dict]) -> list[bytes | None]:
+    """Download a small page of group avatars through one Telegram connection."""
+    client = await get_user_client(user_id)
+    photos: list[bytes | None] = []
+    try:
+        async with asyncio.timeout(max(CONNECT_TIMEOUT_SECONDS, 40)):
+            for dialog in dialogs:
+                chat_id = int(dialog["chat_id"])
+                real_id, _peer_class = telethon_utils.resolve_id(chat_id)
+                if dialog.get("peer_type") == "channel" and dialog.get("access_hash") is not None:
+                    target = InputPeerChannel(real_id, int(dialog["access_hash"]))
+                elif dialog.get("peer_type") == "chat":
+                    target = InputPeerChat(real_id)
+                else:
+                    target = chat_id
+                try:
+                    entity = await client.get_entity(target)
+                    photo = await client.download_profile_photo(entity, file=bytes)
+                    photos.append(bytes(photo) if photo else None)
+                except Exception as exc:
+                    logger.info("[%s] Group %s photo is unavailable: %s", user_id, chat_id, exc)
+                    photos.append(None)
+    except TimeoutError:
+        photos.extend([None] * (len(dialogs) - len(photos)))
+    finally:
+        await release_user_client(user_id)
+    return photos
+
+
 async def disconnect_all():
     for task in list(_qr_login_tasks.values()):
         if not task.done():
