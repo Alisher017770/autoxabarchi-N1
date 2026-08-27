@@ -45,7 +45,7 @@ BROADCAST_WORKER_ENABLED = os.getenv("BROADCAST_WORKER_ENABLED", "true").strip()
 BROADCAST_WORKER_POLL_SECONDS = max(0.2, float(os.getenv("BROADCAST_WORKER_POLL_SECONDS", "1")))
 BROADCAST_LEASE_SECONDS = max(60, int(os.getenv("BROADCAST_LEASE_SECONDS", "180")))
 SUBSCRIPTION_DAYS = int(os.getenv("SUBSCRIPTION_DAYS", "30"))
-BOT_BRAND = os.getenv("BOT_BRAND", "Milliy Flow | Авто хабарчи").strip()
+BOT_BRAND = os.getenv("BOT_BRAND", "Tashkent Goo N1 | Авто хабарчи").strip()
 # Railway'da oldingi nom saqlanib qolgan bo'lsa ham, foydalanuvchiga yangi brend ko'rinadi.
 if BOT_BRAND in {
     "Auto xabarchi N1 bot",
@@ -53,8 +53,10 @@ if BOT_BRAND in {
     "Авто хабарчи N1",
     "XabarFlow",
     "XabarFlow | Авто хабарчи",
+    "Milliy Flow",
+    "Milliy Flow | Авто хабарчи",
 }:
-    BOT_BRAND = "Milliy Flow | Авто хабарчи"
+    BOT_BRAND = "Tashkent Goo N1 | Авто хабарчи"
 SUBSCRIPTION_PRICE = os.getenv("SUBSCRIPTION_PRICE", "30 000 сўм")
 PAYMENT_CARD = os.getenv("PAYMENT_CARD", "5614 6824 1042 4388")
 PAYMENT_OWNER = os.getenv("PAYMENT_OWNER", "R.M")
