@@ -152,6 +152,7 @@ def settings_kb() -> ReplyKeyboardMarkup:
 def interval_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="⚠️ Хавфли - 4 дақиқа")],
             [KeyboardButton(text="⚠️ Хавфли - 5 дақиқа")],
             [KeyboardButton(text="🛡 Тавсия - 10 дақиқа")],
             [KeyboardButton(text="✅ Барқарор - 15 дақиқа")],

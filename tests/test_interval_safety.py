@@ -6,6 +6,7 @@ from interval_safety import is_high_spam_risk_interval, low_interval_warning_tex
 class IntervalSafetyTests(unittest.TestCase):
     def test_intervals_below_ten_minutes_are_high_risk(self):
         self.assertTrue(is_high_spam_risk_interval(3))
+        self.assertTrue(is_high_spam_risk_interval(4))
         self.assertTrue(is_high_spam_risk_interval(5))
         self.assertFalse(is_high_spam_risk_interval(10))
         self.assertFalse(is_high_spam_risk_interval(15))

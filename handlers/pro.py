@@ -173,6 +173,8 @@ INTERVAL_TEXTS = {"⏱ Вақт", "Вақт", "⏱ Interval", "Interval"}
 START_STOP_TEXTS = {"🚀 Старт / Стоп", "Старт / Стоп", "🚀 Start / Stop", "Start / Stop"}
 MANUAL_INTERVAL_TEXTS = {"⚙️ Қўлда танлаш", "Қўлда танлаш", "⚙️ Qo'lda tanlash", "Qo'lda tanlash"}
 INTERVAL_PRESETS = {
+    "⚠️ Хавфли - 4 дақиқа": 4,
+    "Хавфли - 4 дақиқа": 4,
     "⚠️ Хавфли - 5 дақиқа": 5,
     "Хавфли - 5 дақиқа": 5,
     "⚡ Тез - 5 дақиқа": 5,
@@ -2130,7 +2132,7 @@ async def show_interval(message: Message):
     await message.answer(
         "⏱ Хабар юбориш вақтини танланг:\n\n"
         f"Ҳозирги: {_interval_label(settings_row.interval_minutes)}\n\n"
-        "⚠️ 2, 3, 5 ва 7 дақиқа — spam хавфи юқори, лекин танлаш мумкин\n"
+        "⚠️ 2, 3, 4, 5 ва 7 дақиқа — spam хавфи юқори, лекин танлаш мумкин\n"
         "🛡 Тавсия — ҳар 10–15 дақиқа\n"
         "🐢 Секин - ҳар 30 дақиқа\n\n"
         "Бот хавфсизлик учун ҳар 6 соатда 20 дақиқа дам олади ва 12 соатдан кейин ўзи тўхтайди.",

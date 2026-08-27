@@ -35,7 +35,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-INTERVAL_OPTIONS = [2, 3, 5, 7, 10, 15, 30, 360]  # daqiqa (360 = 6 soat)
+INTERVAL_OPTIONS = [2, 3, 4, 5, 7, 10, 15, 30, 360]  # daqiqa (360 = 6 soat)
 REST_EVERY_MINUTES = int(os.getenv("REST_EVERY_MINUTES", "360"))
 REST_DURATION_MINUTES = int(os.getenv("REST_DURATION_MINUTES", "20"))
 MAX_RUN_MINUTES = int(os.getenv("MAX_RUN_MINUTES", "720"))
