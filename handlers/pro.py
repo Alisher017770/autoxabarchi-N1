@@ -58,6 +58,7 @@ from keyboards import (
     settings_kb,
     support_admin_kb,
     support_message_kb,
+    support_ticket_kb,
     subscriber_thanks_kb,
     subscription_offer_kb,
 )
@@ -68,6 +69,7 @@ from repository import (
     add_group,
     create_pending_payment,
     count_users_by_subscription,
+    create_support_ticket,
     ensure_user,
     get_admin_stats,
     get_financial_summary,
@@ -80,6 +82,7 @@ from repository import (
     get_pending_payment,
     get_latest_pending_payment_for_user,
     get_settings,
+    get_support_ticket,
     get_user_account,
     has_active_subscription,
     list_expiring_user_summaries,
@@ -89,12 +92,14 @@ from repository import (
     list_groups,
     list_problem_users,
     list_running_user_summaries,
+    list_open_support_tickets,
     list_user_ids,
     list_user_ids_by_subscription,
     list_user_summaries,
     remove_group,
     remove_all_groups,
     remove_bot_admin,
+    resolve_support_ticket,
     revoke_subscription,
     search_users,
     set_bot_config,
@@ -169,6 +174,7 @@ PROFILE_TEXTS = {"👤 Профил улаш", "Профил улаш", "👤 Pr
 SUBSCRIBE_TEXTS = {"💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish"}
 PAYMENT_PENDING_TEXTS = {"⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда"}
 SUPPORT_TEXTS = {"🆘 Админ билан боғланиш", "Админ билан боғланиш"}
+SUPPORT_QUEUE_TEXTS = {"🆘 Ёрдам навбати", "Ёрдам навбати"}
 GUIDE_TEXTS = {"📹 Фойдаланиш қўлланмаси", "Фойдаланиш қўлланмаси"}
 MY_STATUS_TEXTS = {"📊 Ҳолатим", "Ҳолатим"}
 PHONE_LOGIN_TEXTS = {"📱 Телефон орқали улаш", "Телефон орқали улаш", "📱 Telefon orqali ulash", "Telefon orqali ulash"}
@@ -1637,6 +1643,56 @@ async def show_guide(message: Message, state: FSMContext):
     await _show_guide(message)
 
 
+def _support_message_preview(message: Message) -> str:
+    if message.text:
+        return message.text
+    if message.caption:
+        return message.caption
+    if message.photo:
+        return "📷 Расм"
+    if message.video:
+        return "🎬 Видео"
+    if message.voice:
+        return "🎤 Овозли хабар"
+    if message.document:
+        return "📎 Файл"
+    return "Медиа хабар"
+
+
+def _support_ticket_text(ticket, position: int, total: int) -> str:
+    username = f"@{ticket.username}" if ticket.username else "йўқ"
+    return (
+        f"🆘 <b>Ёрдам навбати: {position}/{total}</b>\n"
+        f"Мурожаат №{ticket.id}\n\n"
+        f"Фойдаланувчи: {html.escape(ticket.full_name)}\n"
+        f"Username: {html.escape(username)}\n"
+        f"ID: <code>{ticket.user_id}</code>\n"
+        f"Келган вақт: {format_tashkent_time(ticket.created_at)}\n\n"
+        f"📝 {html.escape(ticket.preview)}"
+    )
+
+
+async def _show_next_support_ticket(message: Message) -> None:
+    tickets = await list_open_support_tickets(limit=20)
+    if not tickets:
+        await message.answer("✅ Ёрдам навбати бўш.", reply_markup=_admin_kb(message))
+        return
+    ticket = tickets[0]
+    await message.answer(
+        _support_ticket_text(ticket, 1, len(tickets)),
+        parse_mode="HTML",
+        reply_markup=support_ticket_kb(ticket.id, ticket.user_id),
+    )
+
+
+@router.message(F.text.in_(SUPPORT_QUEUE_TEXTS))
+async def show_support_queue(message: Message):
+    if not _is_admin(message):
+        await message.answer("Рухсат йўқ.")
+        return
+    await _show_next_support_ticket(message)
+
+
 @router.message(AdStates.waiting_support_message)
 async def receive_support_message(message: Message, state: FSMContext, bot: Bot):
     if _is_back_text(message):
@@ -1656,35 +1712,90 @@ async def receive_support_message(message: Message, state: FSMContext, bot: Bot)
 
     user = message.from_user
     username = f"@{user.username}" if user.username else "йўқ"
+    ticket, position = await create_support_ticket(
+        user.id,
+        user.full_name,
+        user.username,
+        _support_message_preview(message),
+    )
     delivered = 0
     for admin_id in sorted(_admin_ids):
         try:
             await bot.send_message(
                 admin_id,
-                "🆘 Янги ёрдам сўрови\n\n"
+                f"🆘 Янги ёрдам сўрови №{ticket.id}\n"
+                f"Навбатдаги ўрни: {position}\n\n"
                 f"Фойдаланувчи: {user.full_name}\n"
                 f"Username: {username}\n"
                 f"ID: {user.id}",
-                reply_markup=support_admin_kb(user.id),
+                reply_markup=support_admin_kb(),
             )
             await message.copy_to(admin_id)
             delivered += 1
         except Exception:
             logger.exception("[%s] support message could not be delivered to admin %s", user.id, admin_id)
     if not delivered:
-        logger.exception("[%s] support message could not be delivered to admin", user.id)
-        await message.answer(
-            "❌ Хабар админга етказилмади. Бироздан кейин қайта уриниб кўринг.",
-            reply_markup=await _main_kb(message),
-        )
-        await state.clear()
-        return
+        logger.error("[%s] support notification failed; ticket %s remains queued", user.id, ticket.id)
 
     await state.clear()
     await message.answer(
-        "✅ Хабарингиз админга юборилди. Жавобини кутинг.",
+        f"✅ Мурожаатингиз навбатга қабул қилинди.\n"
+        f"Мурожаат рақами: {ticket.id}\n"
+        f"Навбатдаги ўрнингиз: {position}\n\n"
+        "Админ кетма-кетликда жавоб беради.",
         reply_markup=await _main_kb(message),
     )
+
+
+@router.callback_query(F.data == "supportqueue")
+async def open_support_queue(callback: CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    await _show_next_support_ticket(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("supportticketreply:"))
+async def ask_support_ticket_reply(callback: CallbackQuery, state: FSMContext):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    ticket_id = int(callback.data.split(":", 1)[1])
+    ticket = await get_support_ticket(ticket_id)
+    if ticket is None or ticket.status != "open":
+        await callback.answer("Бу мурожаат аллақачон ёпилган.", show_alert=True)
+        return
+    tickets = await list_open_support_tickets(limit=1)
+    if not tickets or tickets[0].id != ticket_id:
+        await callback.answer("Аввал навбатдаги биринчи мурожаатга жавоб беринг.", show_alert=True)
+        return
+    await state.update_data(
+        support_reply_user_id=ticket.user_id,
+        support_ticket_id=ticket.id,
+    )
+    await state.set_state(AdStates.waiting_support_reply)
+    await callback.message.answer(
+        f"✍️ Мурожаат №{ticket.id} учун жавоб ёзинг.\n"
+        f"ID: {ticket.user_id}\n\n"
+        "Матн, расм ёки файл юбориш мумкин."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("supportresolve:"))
+async def resolve_support_ticket_without_reply(callback: CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    ticket_id = int(callback.data.split(":", 1)[1])
+    resolved = await resolve_support_ticket(ticket_id, callback.from_user.id)
+    if not resolved:
+        await callback.answer("Бу мурожаат аллақачон ёпилган.", show_alert=True)
+        return
+    await callback.message.edit_text(f"✅ Мурожаат №{ticket_id} ҳал қилинди.")
+    await callback.answer("Ёпилди")
+    await _show_next_support_ticket(callback.message)
 
 
 @router.callback_query(F.data.startswith("supportreply:"))
@@ -1693,7 +1804,7 @@ async def ask_support_reply(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     user_id = int(callback.data.split(":", 1)[1])
-    await state.update_data(support_reply_user_id=user_id)
+    await state.update_data(support_reply_user_id=user_id, support_ticket_id=None)
     await state.set_state(AdStates.waiting_support_reply)
     await callback.message.answer(
         f"✍️ Фойдаланувчига жавоб ёзинг.\nID: {user_id}\n\n"
@@ -1715,6 +1826,7 @@ async def receive_support_reply(message: Message, state: FSMContext, bot: Bot):
 
     data = await state.get_data()
     user_id = int(data["support_reply_user_id"])
+    ticket_id = data.get("support_ticket_id")
     try:
         await bot.send_message(user_id, "✉️ Админдан жавоб:")
         await message.copy_to(user_id)
@@ -1724,8 +1836,15 @@ async def receive_support_reply(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
 
+    if ticket_id is not None:
+        await resolve_support_ticket(int(ticket_id), message.from_user.id)
     await state.clear()
-    await message.answer(f"✅ Жавоб юборилди.\nФойдаланувчи ID: {user_id}", reply_markup=_admin_kb(message))
+    await message.answer(
+        f"✅ Жавоб юборилди.\nФойдаланувчи ID: {user_id}",
+        reply_markup=_admin_kb(message),
+    )
+    if ticket_id is not None:
+        await _show_next_support_ticket(message)
 
 
 def _qr_image(url: str) -> BufferedInputFile:

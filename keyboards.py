@@ -14,6 +14,7 @@ RESERVED_MESSAGE_TEXTS = {
     "💳 Обуна бўлиш", "Обуна бўлиш", "💳 Obuna bo'lish", "Obuna bo'lish",
     "⏳ Тасдиқ кутилмоқда", "Тасдиқ кутилмоқда",
     "🆘 Админ билан боғланиш", "Админ билан боғланиш",
+    "🆘 Ёрдам навбати", "Ёрдам навбати",
     "📹 Фойдаланиш қўлланмаси", "Фойдаланиш қўлланмаси",
     "📊 Ҳолатим", "Ҳолатим",
     "📱 Телефон орқали улаш", "Телефон орқали улаш",
@@ -238,9 +239,17 @@ def payment_admin_kb(payment_id: int) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def support_admin_kb(user_id: int) -> InlineKeyboardMarkup:
+def support_admin_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="✍️ Жавоб бериш", callback_data=f"supportreply:{user_id}")
+    kb.button(text="🆘 Навбатни очиш", callback_data="supportqueue")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def support_ticket_kb(ticket_id: int, user_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✍️ Жавоб бериш", callback_data=f"supportticketreply:{ticket_id}")
+    kb.button(text="✅ Ҳал қилинди", callback_data=f"supportresolve:{ticket_id}")
     kb.button(text="👤 Профилни очиш", url=f"tg://user?id={user_id}")
     kb.adjust(1)
     return kb.as_markup()
@@ -257,6 +266,7 @@ def admin_menu_kb(is_owner: bool = False) -> ReplyKeyboardMarkup:
     keyboard = [
         [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="👥 Фойдаланувчилар")],
         [KeyboardButton(text="💳 Тўловлар")],
+        [KeyboardButton(text="🆘 Ёрдам навбати")],
     ]
     if is_owner:
         keyboard.extend([

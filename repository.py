@@ -6,7 +6,7 @@ from sqlalchemy import select, delete, exists, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, BroadcastReport, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, UserAccount
+from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, BroadcastReport, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, SupportTicket, UserAccount
 from time_display import utc_now
 
 
@@ -34,6 +34,66 @@ async def remove_bot_admin(user_id: int, removed_by: int) -> bool:
             return False
         await session.delete(existing)
         session.add(BotAdminAudit(actor_id=removed_by, target_id=user_id, action="removed"))
+        await session.commit()
+        return True
+
+
+async def create_support_ticket(
+    user_id: int,
+    full_name: str,
+    username: str | None,
+    preview: str,
+) -> tuple[SupportTicket, int]:
+    async with async_session() as session:
+        ticket = SupportTicket(
+            user_id=user_id,
+            full_name=full_name[:255],
+            username=(username or None),
+            preview=preview[:1000],
+        )
+        session.add(ticket)
+        await session.flush()
+        position = int(await session.scalar(
+            select(func.count())
+            .select_from(SupportTicket)
+            .where(SupportTicket.status == "open")
+            .where(
+                (SupportTicket.created_at < ticket.created_at)
+                | (
+                    (SupportTicket.created_at == ticket.created_at)
+                    & (SupportTicket.id <= ticket.id)
+                )
+            )
+        ) or 1)
+        await session.commit()
+        await session.refresh(ticket)
+        return ticket, position
+
+
+async def list_open_support_tickets(limit: int = 20) -> list[SupportTicket]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(SupportTicket)
+            .where(SupportTicket.status == "open")
+            .order_by(SupportTicket.created_at, SupportTicket.id)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+async def get_support_ticket(ticket_id: int) -> SupportTicket | None:
+    async with async_session() as session:
+        return await session.get(SupportTicket, ticket_id)
+
+
+async def resolve_support_ticket(ticket_id: int, resolved_by: int) -> bool:
+    async with async_session() as session:
+        ticket = await session.get(SupportTicket, ticket_id)
+        if ticket is None or ticket.status != "open":
+            return False
+        ticket.status = "resolved"
+        ticket.resolved_at = utc_now()
+        ticket.resolved_by = resolved_by
         await session.commit()
         return True
 
