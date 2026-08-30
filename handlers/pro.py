@@ -39,6 +39,7 @@ from keyboards import (
     expiring_user_actions_kb,
     expiring_users_kb,
     finance_kb,
+    group_delete_all_confirm_kb,
     group_delete_kb,
     group_card_kb,
     groups_kb,
@@ -92,6 +93,7 @@ from repository import (
     list_user_ids_by_subscription,
     list_user_summaries,
     remove_group,
+    remove_all_groups,
     remove_bot_admin,
     revoke_subscription,
     search_users,
@@ -176,6 +178,10 @@ GROUP_LIST_TEXTS = {"📋 Гуруҳлар рўйхати", "Гуруҳлар р
 GROUP_ADD_TEXTS = {"➕ Гуруҳ қўшиш", "Гуруҳ қўшиш", "➕ Guruh qo'shish", "Guruh qo'shish"}
 GROUP_ADD_ALL_TEXTS = {"✅ Барча гуруҳларни қўшиш", "Барча гуруҳларни қўшиш", "✅ Barcha guruhlarni qo'shish", "Barcha guruhlarni qo'shish"}
 GROUP_DELETE_TEXTS = {"🗑 Гуруҳ ўчириш", "Гуруҳ ўчириш", "🗑 Guruh o'chirish", "Guruh o'chirish"}
+GROUP_DELETE_ALL_TEXTS = {
+    "🧹 Барча гуруҳларни ўчириш", "Барча гуруҳларни ўчириш",
+    "🧹 Barcha guruhlarni o'chirish", "Barcha guruhlarni o'chirish",
+}
 MESSAGE_TEXTS = {"💬 Хабар ёзиш", "Хабар ёзиш", "💬 Xabar yozish", "Xabar yozish"}
 SETTINGS_TEXTS = {"⚙️ Созламалар", "Созламалар", "⚙️ Sozlamalar", "Sozlamalar"}
 INTERVAL_TEXTS = {"⏱ Вақт", "Вақт", "⏱ Interval", "Interval"}
@@ -2221,6 +2227,40 @@ async def groups_delete(message: Message):
         await message.answer("Ўчириладиган гуруҳ йўқ.")
         return
     await message.answer("🗑 Қайси гуруҳни ўчирамиз?", reply_markup=group_delete_kb(groups))
+
+
+@router.message(F.text.in_(GROUP_DELETE_ALL_TEXTS))
+async def groups_delete_all(message: Message):
+    if not await _ensure_user_access(message):
+        return
+    groups = await list_groups(_key(message), include_disabled=True)
+    if not groups:
+        await message.answer("Ўчириладиган гуруҳ йўқ.")
+        return
+    await message.answer(
+        f"⚠️ <b>{len(groups)} та гуруҳнинг барчаси ўчирилади.</b>\n\n"
+        "Хабар юбориш ҳам тўхтайди. Давом этамизми?",
+        parse_mode="HTML",
+        reply_markup=group_delete_all_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == "deleteallgroups:cancel")
+async def cancel_delete_all_groups(callback: CallbackQuery):
+    await callback.message.edit_text("❌ Барча гуруҳларни ўчириш бекор қилинди.")
+    await callback.answer("Бекор қилинди")
+
+
+@router.callback_query(F.data == "deleteallgroups:confirm")
+async def confirm_delete_all_groups(callback: CallbackQuery):
+    profile = user_profile_key(callback.from_user.id)
+    await stop_broadcast(profile)
+    deleted_count = await remove_all_groups(profile)
+    _group_card_dialogs.pop(callback.from_user.id, None)
+    await callback.message.edit_text(
+        f"✅ {deleted_count} та гуруҳ ўчирилди. Хабар юбориш тўхтатилди."
+    )
+    await callback.answer("Барчаси ўчирилди")
 
 
 @router.callback_query(F.data.startswith("delgroup:"))

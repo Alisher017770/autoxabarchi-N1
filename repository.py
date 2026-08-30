@@ -457,6 +457,17 @@ async def remove_group(profile: str, chat_id: int):
         await session.commit()
 
 
+async def remove_all_groups(profile: str) -> int:
+    """Remove every saved group and its per-group delivery state for one profile."""
+    async with async_session() as session:
+        result = await session.execute(delete(Group).where(Group.profile == profile))
+        await session.execute(delete(GroupCooldown).where(GroupCooldown.profile == profile))
+        await session.execute(delete(GroupSuccess).where(GroupSuccess.profile == profile))
+        await session.execute(delete(GroupPeer).where(GroupPeer.profile == profile))
+        await session.commit()
+        return int(result.rowcount or 0)
+
+
 async def mark_group_success(profile: str, chat_id: int) -> None:
     async with async_session() as session:
         success = await session.get(GroupSuccess, (profile, chat_id))

@@ -24,6 +24,7 @@ RESERVED_MESSAGE_TEXTS = {
     "➕ Гуруҳ қўшиш", "Гуруҳ қўшиш",
     "✅ Барча гуруҳларни қўшиш", "Барча гуруҳларни қўшиш",
     "🗑 Гуруҳ ўчириш", "Гуруҳ ўчириш",
+    "🧹 Барча гуруҳларни ўчириш", "Барча гуруҳларни ўчириш",
     "💬 Хабар ёзиш", "Хабар ёзиш", "💬 Xabar yozish", "Xabar yozish",
     "⚙️ Созламалар", "Созламалар", "⚙️ Sozlamalar", "Sozlamalar",
     "⏱ Вақт", "Вақт", "⏱ Interval", "Interval",
@@ -133,6 +134,7 @@ def groups_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="➕ Гуруҳ қўшиш"), KeyboardButton(text="📋 Гуруҳлар рўйхати")],
             [KeyboardButton(text="✅ Барча гуруҳларни қўшиш")],
             [KeyboardButton(text="🗑 Гуруҳ ўчириш")],
+            [KeyboardButton(text="🧹 Барча гуруҳларни ўчириш")],
             [KeyboardButton(text="⬅️ Орқага")],
         ],
         resize_keyboard=True,
@@ -216,6 +218,14 @@ def group_delete_kb(groups: list) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for group in groups:
         kb.button(text=f"🗑 {group.title[:35]}", callback_data=f"delgroup:{group.chat_id}")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def group_delete_all_confirm_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Ҳа, барчасини ўчириш", callback_data="deleteallgroups:confirm")
+    kb.button(text="❌ Бекор қилиш", callback_data="deleteallgroups:cancel")
     kb.adjust(1)
     return kb.as_markup()
 
