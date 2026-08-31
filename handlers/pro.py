@@ -17,6 +17,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, InputMed
 
 from admin_alerts import save_admin_error
 from broadcaster import retry_spam_check, spam_check_keyboard, start_broadcast, stop_broadcast
+from db import reset_database_connections
 from config import (
     ADMIN_ID,
     BOT_BRAND,
@@ -1685,12 +1686,30 @@ async def _show_next_support_ticket(message: Message) -> None:
     )
 
 
+async def _show_support_queue_reliably(message: Message) -> None:
+    """Keep the admin UI responsive during a brief Railway DB reconnect."""
+    for attempt in range(2):
+        try:
+            await asyncio.wait_for(_show_next_support_ticket(message), timeout=8)
+            return
+        except Exception as exc:
+            if attempt == 0:
+                logger.warning("Support queue query failed; reconnecting: %s", exc)
+                await reset_database_connections()
+                continue
+            logger.exception("Support queue could not be opened")
+    await message.answer(
+        "⚠️ Ёрдам навбатини ҳозир очиб бўлмади. 10 сониядан кейин қайта босинг.",
+        reply_markup=_admin_kb(message),
+    )
+
+
 @router.message(F.text.in_(SUPPORT_QUEUE_TEXTS))
 async def show_support_queue(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
         return
-    await _show_next_support_ticket(message)
+    await _show_support_queue_reliably(message)
 
 
 @router.message(AdStates.waiting_support_message)
@@ -1752,8 +1771,8 @@ async def open_support_queue(callback: CallbackQuery):
     if not _is_admin(callback):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
-    await _show_next_support_ticket(callback.message)
-    await callback.answer()
+    await callback.answer("Навбат очилмоқда...")
+    await _show_support_queue_reliably(callback.message)
 
 
 @router.callback_query(F.data.startswith("supportticketreply:"))
@@ -2260,12 +2279,16 @@ async def groups_add_all(message: Message):
 @router.callback_query(F.data.startswith("addgroup:"))
 async def add_group_cb(callback: CallbackQuery):
     chat_id = int(callback.data.split(":")[1])
-    try:
-        dialogs = await get_user_dialog_groups(callback.from_user.id)
-    except RuntimeError as exc:
-        await callback.message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
-        await callback.answer()
-        return
+    # The menu already loaded these dialogs. Reuse them so every button press
+    # does not reconnect to Telegram and appear frozen.
+    dialogs = _group_card_dialogs.get(callback.from_user.id)
+    if dialogs is None:
+        try:
+            dialogs = await get_user_dialog_groups(callback.from_user.id)
+        except RuntimeError as exc:
+            await callback.message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
+            await callback.answer()
+            return
     dialog = next((dialog for dialog in dialogs if dialog["chat_id"] == chat_id), None)
     if dialog is None or not dialog.get("text_allowed", True):
         await callback.answer("Bu guruhda matn yozish mumkin emas", show_alert=True)
@@ -2275,13 +2298,16 @@ async def add_group_cb(callback: CallbackQuery):
     await callback.answer("Қўшилди" if added else "Аллақачон бор")
     groups = await list_groups(user_profile_key(callback.from_user.id))
     card_dialogs = _group_card_dialogs.get(callback.from_user.id)
+    if card_dialogs:
+        _group_card_dialogs[callback.from_user.id] = [
+            item for item in card_dialogs if int(item["chat_id"]) != chat_id
+        ]
     if GROUP_CARD_PREVIEW_ENABLED and callback.message.photo and card_dialogs:
         old_index = next(
             (index for index, item in enumerate(card_dialogs) if int(item["chat_id"]) == chat_id),
             0,
         )
-        remaining = [item for item in card_dialogs if int(item["chat_id"]) != chat_id]
-        _group_card_dialogs[callback.from_user.id] = remaining
+        remaining = _group_card_dialogs[callback.from_user.id]
         if remaining:
             await _show_group_card(
                 callback.message,
