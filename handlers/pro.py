@@ -36,6 +36,7 @@ from keyboards import (
     admin_user_results_kb,
     admin_user_revoke_confirm_kb,
     admin_users_filter_kb,
+    admin_users_page_kb,
     dialog_pick_kb,
     expiring_user_actions_kb,
     expiring_users_kb,
@@ -981,30 +982,40 @@ async def admin_users(message: Message):
     )
 
 
-async def _show_filtered_admin_users(message: Message, active: bool):
-    users = await list_user_summaries(limit=20, active=active)
+async def _show_filtered_admin_users(message: Message, active: bool, page: int = 0, *, edit: bool = False):
+    page_size = 20
     total = await count_users_by_subscription(active)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    users = await list_user_summaries(limit=page_size, active=active, offset=page * page_size)
     title = "✅ Обуна бўлганлар" if active else "❌ Обуна бўлмаганлар"
     if not users:
-        await message.answer(f"{title}\n\nҲозирча фойдаланувчи йўқ.", reply_markup=admin_users_filter_kb())
+        text = f"{title}\n\nҲозирча фойдаланувчи йўқ."
+        if edit:
+            await message.edit_text(text)
+        else:
+            await message.answer(text, reply_markup=admin_users_filter_kb())
         return
-    lines = [f"{title}\nЖами: {total}\n"]
+    lines = [f"{title}\nЖами: {total} | Саҳифа: {page + 1}/{total_pages}\n"]
     for item in users:
         linked = "уланган" if item["linked"] else "уланмаган"
         sub = _format_until(item["active_until"]) if item["active_until"] else "йўқ"
-        active = "актив" if item["active"] else "актив эмас"
+        subscription_status = "актив" if item["active"] else "актив эмас"
         user_id = int(item["user_id"])
         profile_url = f"tg://user?id={user_id}"
         safe_name = html.escape(str(item["first_name"] or "-"))
         lines.append(
             f'<a href="{profile_url}">{user_id}</a> | '
             f'<a href="{profile_url}">{safe_name}</a>\n'
-            f"Профил: {linked} | Обуна: {active}\n"
+            f"Профил: {linked} | Обуна: {subscription_status}\n"
             f"Гача: {sub}"
         )
-    if total > len(users):
-        lines.append(f"Фақат охирги {len(users)} та фойдаланувчи кўрсатилди.")
-    await message.answer("\n\n".join(lines), reply_markup=admin_users_filter_kb(), parse_mode="HTML")
+    text = "\n\n".join(lines)
+    markup = admin_users_page_kb(active, page, total, page_size)
+    if edit:
+        await message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
 
 @router.message(F.text.in_(SUBSCRIBED_USERS_TEXTS))
@@ -1021,6 +1032,27 @@ async def admin_unsubscribed_users(message: Message):
         await message.answer("Рухсат йўқ.")
         return
     await _show_filtered_admin_users(message, active=False)
+
+
+@router.callback_query(F.data.startswith("adminusers:"))
+async def admin_users_page(callback: CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    try:
+        _, active_text, page_text = callback.data.split(":")
+        active = bool(int(active_text))
+        page = int(page_text)
+    except (TypeError, ValueError):
+        await callback.answer("Нотўғри саҳифа.", show_alert=True)
+        return
+    await _show_filtered_admin_users(callback.message, active, page, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adminusersnoop")
+async def admin_users_page_noop(callback: CallbackQuery):
+    await callback.answer()
 
 
 def _admin_user_card_text(item: dict) -> str:
@@ -2203,7 +2235,10 @@ async def groups_add(message: Message):
     if GROUP_CARD_PREVIEW_ENABLED:
         await _show_group_card(message, message.from_user.id, new_dialogs, 0, edit=False)
     else:
-        await message.answer("➕ Қайси гуруҳни қўшамиз?", reply_markup=dialog_pick_kb(new_dialogs))
+        await message.answer(
+            f"➕ Қайси гуруҳни қўшамиз?\n\nЖами: {len(new_dialogs)} та. Ҳар саҳифада 20 тадан.",
+            reply_markup=dialog_pick_kb(new_dialogs, 0),
+        )
 
 
 @router.callback_query(F.data.startswith("groupcard:"))
@@ -2242,10 +2277,43 @@ async def group_list_mode(callback: CallbackQuery):
     except Exception:
         pass
     await callback.message.answer(
-        "➕ Эски рўйхат кўриниши:",
-        reply_markup=dialog_pick_kb(dialogs),
+        f"➕ Гуруҳлар рўйхати:\n\nЖами: {len(dialogs)} та. Ҳар саҳифада 20 тадан.",
+        reply_markup=dialog_pick_kb(dialogs, 0),
     )
     await callback.answer("Эски кўриниш очилди")
+
+
+@router.callback_query(F.data.startswith("grouplist:"))
+async def group_list_navigate(callback: CallbackQuery):
+    try:
+        page = int(callback.data.split(":", 1)[1])
+    except (TypeError, ValueError):
+        await callback.answer("Нотўғри саҳифа", show_alert=True)
+        return
+    dialogs = _group_card_dialogs.get(callback.from_user.id)
+    if dialogs is None:
+        try:
+            dialogs = await _new_group_dialogs(callback.from_user.id)
+        except RuntimeError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        _group_card_dialogs[callback.from_user.id] = dialogs
+    if not dialogs:
+        await callback.message.edit_text("Қўшиладиган янги гуруҳ топилмади.")
+        await callback.answer()
+        return
+    total_pages = max(1, (len(dialogs) + 19) // 20)
+    page = max(0, min(page, total_pages - 1))
+    await callback.message.edit_text(
+        f"➕ Қайси гуруҳни қўшамиз?\n\nЖами: {len(dialogs)} та. Саҳифа: {page + 1}/{total_pages}",
+        reply_markup=dialog_pick_kb(dialogs, page),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "grouplistnoop")
+async def group_list_noop(callback: CallbackQuery):
+    await callback.answer()
 
 
 @router.message(F.text.in_(GROUP_ADD_ALL_TEXTS))
@@ -2278,7 +2346,12 @@ async def groups_add_all(message: Message):
 
 @router.callback_query(F.data.startswith("addgroup:"))
 async def add_group_cb(callback: CallbackQuery):
-    chat_id = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    chat_id = int(parts[1])
+    try:
+        list_page = int(parts[2]) if len(parts) > 2 else 0
+    except ValueError:
+        list_page = 0
     # The menu already loaded these dialogs. Reuse them so every button press
     # does not reconnect to Telegram and appear frozen.
     dialogs = _group_card_dialogs.get(callback.from_user.id)
@@ -2321,6 +2394,19 @@ async def add_group_cb(callback: CallbackQuery):
             await callback.message.delete()
         except Exception:
             pass
+    if not callback.message.photo and card_dialogs is not None:
+        remaining = _group_card_dialogs.get(callback.from_user.id, [])
+        if remaining:
+            total_pages = max(1, (len(remaining) + 19) // 20)
+            list_page = max(0, min(list_page, total_pages - 1))
+            await callback.message.edit_text(
+                f"✅ Гуруҳ қўшилди. Яна танлашингиз мумкин.\n\n"
+                f"Қолди: {len(remaining)} та. Саҳифа: {list_page + 1}/{total_pages}",
+                reply_markup=dialog_pick_kb(remaining, list_page),
+            )
+            return
+        await callback.message.edit_text("✅ Барча мавжуд гуруҳлар қўшилди.")
+        return
     await callback.message.answer(
         f"✅ {len(groups)} та гуруҳ сақланди.\n\n"
         "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",

@@ -785,13 +785,18 @@ async def set_payment_status(payment_id: int, status: str, amount: int | None = 
             await session.commit()
 
 
-async def list_user_summaries(limit: int = 20, active: bool | None = None) -> list[dict]:
+async def list_user_summaries(
+    limit: int = 20,
+    active: bool | None = None,
+    offset: int = 0,
+) -> list[dict]:
     now = utc_now()
     async with async_session() as session:
         query = (
             select(UserAccount, Subscription)
             .outerjoin(Subscription, Subscription.user_id == UserAccount.user_id)
             .order_by(UserAccount.updated_at.desc())
+            .offset(max(0, offset))
             .limit(limit)
         )
         if active is True:

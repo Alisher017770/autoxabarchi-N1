@@ -4,7 +4,7 @@ from io import BytesIO
 from PIL import Image
 
 from handlers.pro import _group_photo_grid
-from keyboards import group_card_kb
+from keyboards import admin_users_page_kb, dialog_pick_kb, group_card_kb
 
 
 class GroupCardKeyboardTests(unittest.TestCase):
@@ -47,6 +47,29 @@ class GroupCardKeyboardTests(unittest.TestCase):
 
         with Image.open(BytesIO(result)) as grid:
             self.assertEqual((640, 360), grid.size)
+
+    def test_group_list_shows_twenty_items_and_page_arrows(self):
+        dialogs = [
+            {"chat_id": -100000 - index, "title": f"Guruh {index}"}
+            for index in range(45)
+        ]
+
+        keyboard = dialog_pick_kb(dialogs, page=1)
+        callbacks = self._callbacks(keyboard)
+
+        self.assertEqual(20, len([item for item in callbacks if item.startswith("addgroup:")]))
+        self.assertIn("grouplist:0", callbacks)
+        self.assertIn("grouplist:2", callbacks)
+        self.assertIn("grouplistnoop", callbacks)
+        self.assertIn("addgroup:-100020:1", callbacks)
+
+    def test_admin_user_pages_have_back_and_next_navigation(self):
+        callbacks = self._callbacks(admin_users_page_kb(True, page=1, total=45))
+
+        self.assertEqual(
+            ["adminusers:1:0", "adminusersnoop", "adminusers:1:2"],
+            callbacks,
+        )
 
 
 if __name__ == "__main__":

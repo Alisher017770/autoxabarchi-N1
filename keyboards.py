@@ -182,13 +182,54 @@ def manual_interval_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
-def dialog_pick_kb(dialogs: list[dict]) -> InlineKeyboardMarkup:
-    kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Барчасини қўшиш", callback_data="addallgroups")
-    for dialog in dialogs:
-        kb.button(text=f"👥 {dialog['title'][:35]}", callback_data=f"addgroup:{dialog['chat_id']}")
-    kb.adjust(1)
-    return kb.as_markup()
+def dialog_pick_kb(
+    dialogs: list[dict],
+    page: int = 0,
+    page_size: int = 20,
+) -> InlineKeyboardMarkup:
+    total_pages = max(1, (len(dialogs) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start = page * page_size
+    current = dialogs[start:start + page_size]
+    rows = [
+        [InlineKeyboardButton(
+            text=f"👥 {dialog['title'][:35]}",
+            callback_data=f"addgroup:{dialog['chat_id']}:{page}",
+        )]
+        for dialog in current
+    ]
+    rows.append([InlineKeyboardButton(text="✅ Барчасини қўшиш", callback_data="addallgroups")])
+    if total_pages > 1:
+        navigation = []
+        if page > 0:
+            navigation.append(InlineKeyboardButton(text="⬅️", callback_data=f"grouplist:{page - 1}"))
+        navigation.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="grouplistnoop"))
+        if page + 1 < total_pages:
+            navigation.append(InlineKeyboardButton(text="➡️", callback_data=f"grouplist:{page + 1}"))
+        rows.append(navigation)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_users_page_kb(active: bool, page: int, total: int, page_size: int = 20) -> InlineKeyboardMarkup:
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    rows: list[list[InlineKeyboardButton]] = []
+    if total_pages > 1:
+        navigation = []
+        active_value = 1 if active else 0
+        if page > 0:
+            navigation.append(InlineKeyboardButton(
+                text="⬅️ Олдинги",
+                callback_data=f"adminusers:{active_value}:{page - 1}",
+            ))
+        navigation.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="adminusersnoop"))
+        if page + 1 < total_pages:
+            navigation.append(InlineKeyboardButton(
+                text="Кейинги ➡️",
+                callback_data=f"adminusers:{active_value}:{page + 1}",
+            ))
+        rows.append(navigation)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def group_card_kb(dialogs: list[dict], index: int, total: int) -> InlineKeyboardMarkup:
