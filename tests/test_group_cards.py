@@ -4,7 +4,7 @@ from io import BytesIO
 from PIL import Image
 
 from handlers.pro import _group_photo_grid
-from keyboards import admin_users_page_kb, dialog_pick_kb, group_card_kb
+from keyboards import admin_users_page_kb, dialog_pick_kb, group_card_kb, group_folders_kb
 
 
 class GroupCardKeyboardTests(unittest.TestCase):
@@ -70,6 +70,16 @@ class GroupCardKeyboardTests(unittest.TestCase):
             ["adminusers:1:0", "adminusersnoop", "adminusers:1:2"],
             callbacks,
         )
+
+    def test_folder_button_shows_group_count(self):
+        keyboard = group_folders_kb([{
+            "id": 7,
+            "title": "Taksi guruhlari",
+            "groups": [{"chat_id": -1001}, {"chat_id": -1002}],
+        }])
+
+        self.assertEqual("📁 Taksi guruhlari · 2 та", keyboard.inline_keyboard[0][0].text)
+        self.assertEqual("addfolder:7", keyboard.inline_keyboard[0][0].callback_data)
 
 
 if __name__ == "__main__":

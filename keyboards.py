@@ -23,6 +23,7 @@ RESERVED_MESSAGE_TEXTS = {
     "👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar",
     "📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати",
     "➕ Гуруҳ қўшиш", "Гуруҳ қўшиш",
+    "📁 Папкадан қўшиш", "Папкадан қўшиш",
     "✅ Барча гуруҳларни қўшиш", "Барча гуруҳларни қўшиш",
     "🗑 Гуруҳ ўчириш", "Гуруҳ ўчириш",
     "🧹 Барча гуруҳларни ўчириш", "Барча гуруҳларни ўчириш",
@@ -133,6 +134,7 @@ def groups_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="➕ Гуруҳ қўшиш"), KeyboardButton(text="📋 Гуруҳлар рўйхати")],
+            [KeyboardButton(text="📁 Папкадан қўшиш")],
             [KeyboardButton(text="✅ Барча гуруҳларни қўшиш")],
             [KeyboardButton(text="🗑 Гуруҳ ўчириш")],
             [KeyboardButton(text="🧹 Барча гуруҳларни ўчириш")],
@@ -229,6 +231,17 @@ def admin_users_page_kb(active: bool, page: int, total: int, page_size: int = 20
                 callback_data=f"adminusers:{active_value}:{page + 1}",
             ))
         rows.append(navigation)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def group_folders_kb(folders: list[dict]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(
+            text=f"📁 {folder['title'][:30]} · {len(folder['groups'])} та",
+            callback_data=f"addfolder:{int(folder['id'])}",
+        )]
+        for folder in folders
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

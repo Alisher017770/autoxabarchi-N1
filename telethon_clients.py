@@ -10,7 +10,8 @@ from telethon.errors import AuthKeyDuplicatedError, PhoneCodeInvalidError, Sessi
 from telethon.errors.common import AuthKeyNotFound
 from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
 from telethon.sessions import StringSession
-from telethon.tl.types import InputPeerChannel, InputPeerChat
+from telethon.tl import functions
+from telethon.tl.types import DialogFilterDefault, InputPeerChannel, InputPeerChat
 
 from config import API_ID, API_HASH
 from repository import clear_user_session, get_user_session, save_group_peers, save_user_session
@@ -376,6 +377,78 @@ async def get_user_dialog_groups(user_id: int) -> list[dict]:
         await release_user_client(user_id)
     logger.info("[%s] Telegram dialogs scanned: %s; groups found: %s", user_id, scanned_dialogs, len(groups))
     return groups
+
+
+def _dialog_filter_title(dialog_filter) -> str:
+    title = getattr(dialog_filter, "title", "Papka")
+    return str(getattr(title, "text", title) or "Papka")
+
+
+async def get_user_dialog_folders(user_id: int) -> list[dict]:
+    """Return Telegram chat folders together with their eligible group dialogs."""
+    client = await get_user_client(user_id)
+    groups: list[dict] = []
+    try:
+        async with asyncio.timeout(GROUP_SCAN_TIMEOUT_SECONDS):
+            filters = await client(functions.messages.GetDialogFiltersRequest())
+            async for dialog in client.iter_dialogs(limit=None, ignore_migrated=True):
+                if not dialog.is_group:
+                    continue
+                peer = getattr(dialog, "input_entity", None)
+                peer_type = None
+                access_hash = None
+                if isinstance(peer, InputPeerChannel):
+                    peer_type = "channel"
+                    access_hash = peer.access_hash
+                elif isinstance(peer, InputPeerChat):
+                    peer_type = "chat"
+                groups.append({
+                    "chat_id": dialog.id,
+                    "title": dialog.name,
+                    "peer_type": peer_type,
+                    "access_hash": access_hash,
+                    "text_allowed": group_allows_text_messages(
+                        getattr(dialog, "entity", None)
+                    ),
+                })
+
+            by_id = {int(group["chat_id"]): group for group in groups}
+            folders = []
+            for dialog_filter in filters:
+                if isinstance(dialog_filter, DialogFilterDefault):
+                    continue
+                included = {
+                    telethon_utils.get_peer_id(peer)
+                    for peer in (
+                        list(getattr(dialog_filter, "include_peers", []) or [])
+                        + list(getattr(dialog_filter, "pinned_peers", []) or [])
+                    )
+                }
+                excluded = {
+                    telethon_utils.get_peer_id(peer)
+                    for peer in (getattr(dialog_filter, "exclude_peers", []) or [])
+                }
+                if getattr(dialog_filter, "groups", False):
+                    included.update(by_id)
+                selected = [
+                    group for chat_id, group in by_id.items()
+                    if chat_id in included and chat_id not in excluded
+                ]
+                if selected:
+                    folders.append({
+                        "id": int(dialog_filter.id),
+                        "title": _dialog_filter_title(dialog_filter),
+                        "groups": selected,
+                    })
+            await save_group_peers(
+                str(user_id),
+                [group for group in groups if group["peer_type"]],
+            )
+            return folders
+    except TimeoutError as exc:
+        raise RuntimeError("Telegram папкаларини олиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
+    finally:
+        await release_user_client(user_id)
 
 
 async def get_user_group_photo(

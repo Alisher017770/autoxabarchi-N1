@@ -44,6 +44,7 @@ from keyboards import (
     group_delete_all_confirm_kb,
     group_delete_kb,
     group_card_kb,
+    group_folders_kb,
     groups_kb,
     guide_channel_kb,
     interval_kb,
@@ -122,6 +123,7 @@ from telethon_clients import (
     finish_qr_login,
     get_user_client,
     get_user_dialog_groups,
+    get_user_dialog_folders,
     get_user_group_photos,
     release_user_client,
     login_code_next_delivery_text,
@@ -146,6 +148,7 @@ SUBSCRIBER_THANKS_TEXT = (
 _audience_broadcasts_running: set[str] = set()
 _admin_ids: set[int] = {ADMIN_ID}
 _group_card_dialogs: dict[int, list[dict]] = {}
+_group_folder_dialogs: dict[int, dict[int, dict]] = {}
 GROUP_CARD_LIMIT = 30
 GROUP_CARD_PAGE_SIZE = 4
 
@@ -184,6 +187,7 @@ QR_LOGIN_TEXTS = {"📷 QR-код орқали улаш", "QR-код орқал�
 GROUPS_TEXTS = {"👥 Гуруҳлар", "Гуруҳлар", "👥 Guruhlar", "Guruhlar"}
 GROUP_LIST_TEXTS = {"📋 Гуруҳлар рўйхати", "Гуруҳлар рўйхати", "📋 Guruhlar ro'yxati", "Guruhlar ro'yxati"}
 GROUP_ADD_TEXTS = {"➕ Гуруҳ қўшиш", "Гуруҳ қўшиш", "➕ Guruh qo'shish", "Guruh qo'shish"}
+GROUP_FOLDER_ADD_TEXTS = {"📁 Папкадан қўшиш", "Папкадан қўшиш", "📁 Papkadan qo'shish", "Papkadan qo'shish"}
 GROUP_ADD_ALL_TEXTS = {"✅ Барча гуруҳларни қўшиш", "Барча гуруҳларни қўшиш", "✅ Barcha guruhlarni qo'shish", "Barcha guruhlarni qo'shish"}
 GROUP_DELETE_TEXTS = {"🗑 Гуруҳ ўчириш", "Гуруҳ ўчириш", "🗑 Guruh o'chirish", "Guruh o'chirish"}
 GROUP_DELETE_ALL_TEXTS = {
@@ -2239,6 +2243,76 @@ async def groups_add(message: Message):
             f"➕ Қайси гуруҳни қўшамиз?\n\nЖами: {len(new_dialogs)} та. Ҳар саҳифада 20 тадан.",
             reply_markup=dialog_pick_kb(new_dialogs, 0),
         )
+
+
+@router.message(F.text.in_(GROUP_FOLDER_ADD_TEXTS))
+async def groups_add_from_folder(message: Message):
+    if not await _ensure_user_access(message):
+        return
+    progress = await message.answer("⏳ Telegram папкалари олинмоқда...")
+    try:
+        folders = await get_user_dialog_folders(message.from_user.id)
+    except RuntimeError as exc:
+        await progress.edit_text(f"❌ Хато: {exc}")
+        return
+    if not folders:
+        await progress.edit_text(
+            "📁 Гуруҳли Telegram папкаси топилмади.\n\n"
+            "Telegram ичида керакли гуруҳларни битта папкага жойлаб, қайта уриниб кўринг."
+        )
+        return
+    _group_folder_dialogs[message.from_user.id] = {
+        int(folder["id"]): folder for folder in folders
+    }
+    await progress.edit_text(
+        "📁 Қайси папкадаги гуруҳларни қўшамиз?",
+        reply_markup=group_folders_kb(folders),
+    )
+
+
+@router.callback_query(F.data.startswith("addfolder:"))
+async def add_groups_from_folder(callback: CallbackQuery):
+    try:
+        folder_id = int(callback.data.split(":", 1)[1])
+    except (TypeError, ValueError):
+        await callback.answer("Нотўғри папка.", show_alert=True)
+        return
+    folders = _group_folder_dialogs.get(callback.from_user.id)
+    if not folders or folder_id not in folders:
+        try:
+            fresh = await get_user_dialog_folders(callback.from_user.id)
+        except RuntimeError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        folders = {int(folder["id"]): folder for folder in fresh}
+        _group_folder_dialogs[callback.from_user.id] = folders
+    folder = folders.get(folder_id)
+    if not folder:
+        await callback.answer("Папка топилмади.", show_alert=True)
+        return
+
+    await callback.answer("Гуруҳлар қўшилмоқда...")
+    added_count = 0
+    duplicate_count = 0
+    restricted_count = 0
+    profile = user_profile_key(callback.from_user.id)
+    for dialog in folder["groups"]:
+        if not dialog.get("text_allowed", True):
+            restricted_count += 1
+            continue
+        if await add_group(profile, int(dialog["chat_id"]), dialog["title"]):
+            added_count += 1
+        else:
+            duplicate_count += 1
+
+    _group_card_dialogs.pop(callback.from_user.id, None)
+    await callback.message.edit_text(
+        f"✅ <b>{html.escape(str(folder['title']))}</b> папкаси тайёр.\n\n"
+        f"Қўшилди: {added_count} та\n"
+        f"Олдин қўшилган: {duplicate_count} та\n"
+        f"Матн ёзиш мумкин эмас: {restricted_count} та",
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data.startswith("groupcard:"))
