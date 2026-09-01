@@ -42,6 +42,23 @@ class WorkerQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["1001"], [job.profile for job in first])
         self.assertEqual([], second)
 
+    async def test_second_process_cannot_open_the_same_telegram_session(self):
+        first = await repository.acquire_profile_session_lease(1001, "process-a", 120)
+        second = await repository.acquire_profile_session_lease(1001, "process-b", 120)
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+
+    async def test_telegram_session_lease_can_move_after_release(self):
+        self.assertTrue(
+            await repository.acquire_profile_session_lease(1002, "process-a", 120)
+        )
+        await repository.release_profile_session_lease(1002, "process-a")
+
+        self.assertTrue(
+            await repository.acquire_profile_session_lease(1002, "process-b", 120)
+        )
+
     async def test_old_generation_cannot_renew_after_restart(self):
         now = datetime.utcnow()
         async with self.sessions() as session:

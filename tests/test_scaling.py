@@ -187,6 +187,9 @@ class ScalingTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(telethon_clients, "get_user_session", new=AsyncMock(return_value="session")),
             patch.object(telethon_clients, "_new_client", return_value=client),
+            patch.object(telethon_clients, "acquire_profile_session_lease", new=AsyncMock(return_value=True)) as acquire_lease,
+            patch.object(telethon_clients, "renew_profile_session_lease", new=AsyncMock(return_value=True)),
+            patch.object(telethon_clients, "release_profile_session_lease", new=AsyncMock()) as release_lease,
         ):
             first = await telethon_clients.get_user_client(user_id)
             second = await telethon_clients.get_user_client(user_id)
@@ -199,6 +202,8 @@ class ScalingTests(unittest.IsolatedAsyncioTestCase):
             await telethon_clients.release_user_client(user_id)
             client.disconnect.assert_awaited_once()
             self.assertNotIn(user_id, telethon_clients._clients)
+            acquire_lease.assert_awaited_once()
+            release_lease.assert_awaited_once()
 
     async def test_reclaimed_cycle_does_not_send_the_same_group_twice(self):
         sent_to = []

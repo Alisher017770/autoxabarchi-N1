@@ -6,8 +6,82 @@ from sqlalchemy import select, delete, exists, func, or_, update, cast, String
 from sqlalchemy.exc import IntegrityError
 from config import PAYMENT_CARD, PAYMENT_OWNER, SUBSCRIPTION_PRICE
 from db import async_session
-from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, BroadcastReport, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, SupportTicket, UserAccount
+from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, BroadcastReport, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, ProfileSessionLease, Settings, Subscription, SubscriptionNotice, SupportTicket, UserAccount
 from time_display import utc_now
+
+
+async def acquire_profile_session_lease(
+    user_id: int,
+    owner: str,
+    lease_seconds: int,
+) -> bool:
+    """Try to reserve one Telegram auth key for exactly one process."""
+    now = utc_now()
+    lease_until = now + timedelta(seconds=lease_seconds)
+    async with async_session() as session:
+        result = await session.execute(
+            select(ProfileSessionLease)
+            .where(ProfileSessionLease.user_id == user_id)
+            .with_for_update()
+        )
+        lease = result.scalar_one_or_none()
+        if lease is not None:
+            if lease.owner != owner and lease.lease_until > now:
+                return False
+            lease.owner = owner
+            lease.lease_until = lease_until
+            lease.updated_at = now
+            await session.commit()
+            return True
+
+        session.add(ProfileSessionLease(
+            user_id=user_id,
+            owner=owner,
+            lease_until=lease_until,
+            updated_at=now,
+        ))
+        try:
+            await session.commit()
+            return True
+        except IntegrityError:
+            # Another Railway process inserted the same profile between the
+            # SELECT and INSERT. It owns the session; retry after it releases.
+            await session.rollback()
+            return False
+
+
+async def renew_profile_session_lease(
+    user_id: int,
+    owner: str,
+    lease_seconds: int,
+) -> bool:
+    now = utc_now()
+    result_values = {
+        "lease_until": now + timedelta(seconds=lease_seconds),
+        "updated_at": now,
+    }
+    async with async_session() as session:
+        result = await session.execute(
+            update(ProfileSessionLease)
+            .where(
+                ProfileSessionLease.user_id == user_id,
+                ProfileSessionLease.owner == owner,
+            )
+            .values(**result_values)
+        )
+        await session.commit()
+        return bool(result.rowcount)
+
+
+async def release_profile_session_lease(user_id: int, owner: str) -> None:
+    async with async_session() as session:
+        await session.execute(
+            delete(ProfileSessionLease).where(
+                ProfileSessionLease.user_id == user_id,
+                ProfileSessionLease.owner == owner,
+            )
+        )
+        await session.commit()
 
 
 async def list_bot_admins() -> list[BotAdmin]:

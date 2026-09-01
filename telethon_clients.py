@@ -3,7 +3,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 import math
+import os
+import socket
 import time
+import uuid
 
 from telethon import TelegramClient, utils as telethon_utils
 from telethon.errors import AuthKeyDuplicatedError, PhoneCodeInvalidError, SessionPasswordNeededError
@@ -14,10 +17,21 @@ from telethon.tl import functions
 from telethon.tl.types import DialogFilterDefault, InputPeerChannel, InputPeerChat
 
 from config import API_ID, API_HASH
-from repository import clear_user_session, get_user_session, save_group_peers, save_user_session
+from repository import (
+    acquire_profile_session_lease,
+    clear_user_session,
+    get_user_session,
+    release_profile_session_lease,
+    renew_profile_session_lease,
+    save_group_peers,
+    save_user_session,
+)
 
 CONNECT_TIMEOUT_SECONDS = 25
 GROUP_SCAN_TIMEOUT_SECONDS = 90
+PROFILE_SESSION_LEASE_SECONDS = 120
+PROFILE_SESSION_LEASE_WAIT_SECONDS = 120
+PROFILE_SESSION_LEASE_RENEW_SECONDS = 30
 logger = logging.getLogger(__name__)
 
 
@@ -48,6 +62,62 @@ _login_phones: dict[int, str] = {}
 _qr_login_tasks: dict[int, asyncio.Task] = {}
 _login_code_infos: dict[int, LoginCodeInfo] = {}
 _login_code_resend_at: dict[int, float] = {}
+_profile_lease_tasks: dict[int, asyncio.Task] = {}
+_profile_lease_owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex}"
+
+
+async def _profile_lease_heartbeat(user_id: int) -> None:
+    try:
+        while True:
+            await asyncio.sleep(PROFILE_SESSION_LEASE_RENEW_SECONDS)
+            renewed = await renew_profile_session_lease(
+                user_id,
+                _profile_lease_owner,
+                PROFILE_SESSION_LEASE_SECONDS,
+            )
+            if not renewed:
+                logger.error("[%s] Telegram profilining umumiy qulfi yo'qotildi", user_id)
+                client = _clients.get(user_id)
+                if client and client.is_connected():
+                    await client.disconnect()
+                return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("[%s] Telegram profilining umumiy qulfini yangilashda xato", user_id)
+
+
+async def _acquire_profile_lease(user_id: int) -> None:
+    deadline = time.monotonic() + PROFILE_SESSION_LEASE_WAIT_SECONDS
+    while True:
+        if await acquire_profile_session_lease(
+            user_id,
+            _profile_lease_owner,
+            PROFILE_SESSION_LEASE_SECONDS,
+        ):
+            _profile_lease_tasks[user_id] = asyncio.create_task(
+                _profile_lease_heartbeat(user_id)
+            )
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "Профил ҳозир бошқа жараёнда ишлаяпти. Бироздан кейин қайта уриниб кўринг."
+            )
+        await asyncio.sleep(0.5)
+
+
+async def _release_profile_lease(user_id: int) -> None:
+    task = _profile_lease_tasks.pop(user_id, None)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    try:
+        await release_profile_session_lease(user_id, _profile_lease_owner)
+    except Exception:
+        logger.exception("[%s] Telegram profilining umumiy qulfini bo'shatishda xato", user_id)
 
 
 def _new_client(session: StringSession | str | None = None) -> TelegramClient:
@@ -285,38 +355,45 @@ async def get_user_client(user_id: int) -> TelegramClient:
             _client_refs[user_id] = _client_refs.get(user_id, 0) + 1
             return client
 
-        session_str = await get_user_session(user_id)
-        if not session_str:
-            raise RuntimeError("Ҳозирча профил уланмаган. Аввал «Профил улаш» бўлимидан уланг.")
+        await _acquire_profile_lease(user_id)
 
-        client = _new_client(session_str)
         try:
-            await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
-            authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=CONNECT_TIMEOUT_SECONDS)
-        except AuthKeyDuplicatedError as exc:
-            _clients.pop(user_id, None)
-            try:
-                await client.disconnect()
-            except Exception:
-                pass
-            await clear_user_session(user_id)
-            raise RuntimeError(
-                "Бу спам чеклови эмас. Telegram сессияни икки хил IP манзилда "
-                "ишлатилгани учун бекор қилган. «Профил улаш» орқали қайта уланг "
-                "ва ушбу профилни бошқа серверда ишлатманг."
-            ) from exc
-        except asyncio.TimeoutError as exc:
-            await client.disconnect()
-            raise RuntimeError("Telegram аккаунтига уланиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
-        except AuthKeyNotFound as exc:
-            await client.disconnect()
-            await clear_user_session(user_id)
-            raise RuntimeError("Сессия эскирган ёки нотўғри. Профилни қайта уланг.") from exc
+            session_str = await get_user_session(user_id)
+            if not session_str:
+                raise RuntimeError("Ҳозирча профил уланмаган. Аввал «Профил улаш» бўлимидан уланг.")
 
-        if not authorized:
-            await client.disconnect()
-            await clear_user_session(user_id)
-            raise RuntimeError("Профил авторизациядан ўтмаган. Профилни қайта уланг.")
+            client = _new_client(session_str)
+            try:
+                await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
+                authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=CONNECT_TIMEOUT_SECONDS)
+            except AuthKeyDuplicatedError as exc:
+                _clients.pop(user_id, None)
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                await clear_user_session(user_id)
+                raise RuntimeError(
+                    "Бу спам чеклови эмас. Telegram сессияни икки хил IP манзилда "
+                    "ишлатилгани учун бекор қилган. «Профил улаш» орқали қайта уланг "
+                    "ва ушбу профилни бошқа серверда ишлатманг."
+                ) from exc
+            except asyncio.TimeoutError as exc:
+                await client.disconnect()
+                raise RuntimeError("Telegram аккаунтига уланиш вақти тугади. Кейинроқ қайта уриниб кўринг.") from exc
+            except AuthKeyNotFound as exc:
+                await client.disconnect()
+                await clear_user_session(user_id)
+                raise RuntimeError("Сессия эскирган ёки нотўғри. Профилни қайта уланг.") from exc
+
+            if not authorized:
+                await client.disconnect()
+                await clear_user_session(user_id)
+                raise RuntimeError("Профил авторизациядан ўтмаган. Профилни қайта уланг.")
+
+        except Exception:
+            await _release_profile_lease(user_id)
+            raise
 
         _clients[user_id] = client
         _client_refs[user_id] = _client_refs.get(user_id, 0) + 1
@@ -336,6 +413,7 @@ async def release_user_client(user_id: int) -> None:
         client = _clients.pop(user_id, None)
         if client and client.is_connected():
             await client.disconnect()
+        await _release_profile_lease(user_id)
 
 
 async def get_user_dialog_groups(user_id: int) -> list[dict]:
@@ -519,3 +597,5 @@ async def disconnect_all():
     _clients.clear()
     _client_refs.clear()
     _login_clients.clear()
+    for user_id in list(_profile_lease_tasks):
+        await _release_profile_lease(user_id)

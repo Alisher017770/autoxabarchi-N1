@@ -72,6 +72,21 @@ class BroadcastJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
+class ProfileSessionLease(Base):
+    """Cross-process ownership of one Telegram profile session.
+
+    A Telethon StringSession contains one Telegram authorization key. Opening
+    that key from two Railway processes at once can make Telegram invalidate
+    it with AUTH_KEY_DUPLICATED, so every profile is leased before connecting.
+    """
+    __tablename__ = "profile_session_leases"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    owner: Mapped[str] = mapped_column(String(128), index=True)
+    lease_until: Mapped[datetime] = mapped_column(DateTime, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+
+
 class BroadcastReport(Base):
     """The most recent delivery summary shown to one user on demand."""
     __tablename__ = "broadcast_reports"

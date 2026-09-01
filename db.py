@@ -23,7 +23,7 @@ async def reset_database_connections() -> None:
 
 
 async def init_db():
-    from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, BroadcastReport, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, Settings, Subscription, SubscriptionNotice, SupportTicket, UserAccount  # noqa
+    from models import AdminAlert, BotAdmin, BotAdminAudit, BotConfig, BroadcastIssue, BroadcastJob, BroadcastReport, Group, GroupCooldown, GroupPeer, GroupSuccess, PendingPayment, ProfileSessionLease, Settings, Subscription, SubscriptionNotice, SupportTicket, UserAccount  # noqa
     async with engine.begin() as conn:
         if engine.dialect.name == "postgresql":
             # Both Railway services start from the same repository. Serialize
