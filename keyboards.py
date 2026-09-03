@@ -304,7 +304,8 @@ def support_ticket_kb(ticket_id: int, user_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="✍️ Жавоб бериш", callback_data=f"supportticketreply:{ticket_id}")
     kb.button(text="✅ Ҳал қилинди", callback_data=f"supportresolve:{ticket_id}")
-    kb.button(text="👤 Профилни очиш", url=f"tg://user?id={user_id}")
+    # Telegram rejects the entire keyboard for privacy-restricted tg://user links.
+    kb.button(text="👤 Мижоз картаси", callback_data=f"usercard:{user_id}")
     kb.adjust(1)
     return kb.as_markup()
 

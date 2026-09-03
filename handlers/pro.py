@@ -10,7 +10,8 @@ import re
 import qrcode
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramRetryAfter
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+from sqlalchemy.exc import SQLAlchemyError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, InputMediaPhoto, Message
@@ -1728,12 +1729,17 @@ async def _show_support_queue_reliably(message: Message) -> None:
         try:
             await asyncio.wait_for(_show_next_support_ticket(message), timeout=8)
             return
-        except Exception as exc:
+        except SQLAlchemyError as exc:
             if attempt == 0:
                 logger.warning("Support queue query failed; reconnecting: %s", exc)
                 await reset_database_connections()
                 continue
             logger.exception("Support queue could not be opened")
+        except Exception:
+            # A rejected Telegram message is not a DB fault. Resetting the
+            # shared pool cannot fix it and needlessly affects other handlers.
+            logger.exception("Support queue card could not be delivered")
+            break
     await message.answer(
         "⚠️ Ёрдам навбатини ҳозир очиб бўлмади. 10 сониядан кейин қайта босинг.",
         reply_markup=_admin_kb(message),
@@ -1833,7 +1839,8 @@ async def ask_support_ticket_reply(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         f"✍️ Мурожаат №{ticket.id} учун жавоб ёзинг.\n"
         f"ID: {ticket.user_id}\n\n"
-        "Матн, расм ёки файл юбориш мумкин."
+        "Матн, расм ёки файл юбориш мумкин. Бекор қилиш: «⬅️ Орқага».",
+        reply_markup=support_message_kb(),
     )
     await callback.answer()
 
@@ -1863,7 +1870,8 @@ async def ask_support_reply(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdStates.waiting_support_reply)
     await callback.message.answer(
         f"✍️ Фойдаланувчига жавоб ёзинг.\nID: {user_id}\n\n"
-        "Матн, расм ёки файл юбориш мумкин."
+        "Матн, расм ёки файл юбориш мумкин. Бекор қилиш: «⬅️ Орқага».",
+        reply_markup=support_message_kb(),
     )
     await callback.answer()
 
@@ -1880,15 +1888,40 @@ async def receive_support_reply(message: Message, state: FSMContext, bot: Bot):
         return
 
     data = await state.get_data()
+    if not data.get("support_reply_user_id"):
+        await state.clear()
+        await message.answer(
+            "⚠️ Жавоб бериш ҳолати янгиланган. Ёрдам навбатидан «Жавоб бериш»ни қайта босинг.",
+            reply_markup=_admin_kb(message),
+        )
+        return
     user_id = int(data["support_reply_user_id"])
     ticket_id = data.get("support_ticket_id")
     try:
         await bot.send_message(user_id, "✉️ Админдан жавоб:")
         await message.copy_to(user_id)
-    except Exception:
+    except TelegramForbiddenError:
         logger.exception("Support reply could not be delivered to user %s", user_id)
-        await message.answer("❌ Жавоб етказилмади. Фойдаланувчи ботни блоклаган бўлиши мумкин.")
+        await message.answer(
+            "❌ Telegram бу фойдаланувчига хабар юборишга рухсат бермади. "
+            "У ботни блоклаган бўлиши мумкин. Мурожаат навбатда сақланди.",
+            reply_markup=support_ticket_kb(int(ticket_id), user_id) if ticket_id is not None else None,
+        )
         await state.clear()
+        return
+    except TelegramRetryAfter as exc:
+        await message.answer(
+            f"⏳ Telegram {exc.retry_after} сония кутишни сўради. "
+            "Кейин жавобингизни қайта юборинг. Мурожаат сақланди."
+        )
+        return
+    except Exception:
+        logger.exception("Support reply delivery not confirmed for user %s", user_id)
+        await message.answer(
+            "⚠️ Жавоб етказилганини тасдиқлаб бўлмади. Мурожаат ва қабул қилувчи сақланди. "
+            "Автоматик қайта юбормайман: аввал етган-етмаганини текширинг, "
+            "етмаган бўлса жавобни қайта юборинг. Бекор қилиш: «⬅️ Орқага»."
+        )
         return
 
     if ticket_id is not None:
@@ -1899,7 +1932,7 @@ async def receive_support_reply(message: Message, state: FSMContext, bot: Bot):
         reply_markup=_admin_kb(message),
     )
     if ticket_id is not None:
-        await _show_next_support_ticket(message)
+        await _show_support_queue_reliably(message)
 
 
 def _qr_image(url: str) -> BufferedInputFile:
