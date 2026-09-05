@@ -17,6 +17,7 @@ RESERVED_MESSAGE_TEXTS = {
     "🆘 Ёрдам навбати", "Ёрдам навбати",
     "📹 Фойдаланиш қўлланмаси", "Фойдаланиш қўлланмаси",
     "📊 Ҳолатим", "Ҳолатим",
+    "📨 Юбориш ҳисоботи", "📋 Мурожаатим ҳолати",
     "📱 Телефон орқали улаш", "Телефон орқали улаш",
     "🔄 Кодни қайта сўраш", "Кодни қайта сўраш",
     "📩 Кодни кейинги усулда сўраш", "Кодни кейинги усулда сўраш",
@@ -71,13 +72,14 @@ def main_menu_kb(
     else:
         keyboard.extend([
             [KeyboardButton(text="👥 Гуруҳлар"), KeyboardButton(text="💬 Хабар ёзиш")],
-            [KeyboardButton(text="📊 Ҳолатим")],
+            [KeyboardButton(text="📊 Ҳолатим"), KeyboardButton(text="📨 Юбориш ҳисоботи")],
             [KeyboardButton(text="🚀 Старт / Стоп")],
             [KeyboardButton(text="⚙️ Созламалар")],
         ])
     keyboard.append([KeyboardButton(text="📹 Фойдаланиш қўлланмаси")])
     if not is_admin:
         keyboard.append([KeyboardButton(text="🆘 Админ билан боғланиш")])
+        keyboard.append([KeyboardButton(text="📋 Мурожаатим ҳолати")])
     if is_admin:
         keyboard.append([KeyboardButton(text="🛠 Админ панел")])
     return ReplyKeyboardMarkup(

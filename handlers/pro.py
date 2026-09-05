@@ -14,7 +14,7 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from sqlalchemy.exc import SQLAlchemyError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, InputMediaPhoto, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, ErrorEvent, InputMediaPhoto, Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from admin_alerts import save_admin_error
 from broadcaster import retry_spam_check, spam_check_keyboard, start_broadcast, stop_broadcast
@@ -87,6 +87,8 @@ from repository import (
     get_latest_pending_payment_for_user,
     get_settings,
     get_support_ticket,
+    get_user_support_status,
+    mark_support_processing,
     get_user_account,
     has_active_subscription,
     list_expiring_user_summaries,
@@ -302,6 +304,12 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
         return False
 
     await state.clear()
+    if text == "📨 Юбориш ҳисоботи":
+        await show_delivery_report(message)
+        return True
+    if text == "📋 Мурожаатим ҳолати":
+        await show_my_support_status(message)
+        return True
     if text in GUIDE_TEXTS:
         await _show_guide(message)
         return True
@@ -468,6 +476,47 @@ async def show_my_status(message: Message):
     if issue_text:
         text += f"\n{issue_text}"
     await message.answer(text, parse_mode="HTML", reply_markup=await _main_kb(message))
+
+
+@router.message(F.text == "📨 Юбориш ҳисоботи")
+async def show_delivery_report(message: Message):
+    status = await get_user_delivery_status(message.from_user.id)
+    report = status["report"]
+    if report is None:
+        await message.answer("📨 Ҳали юбориш натижаси йўқ. Биринчи юборишдан кейин шу ерда кўринади.")
+        return
+    pending = max(0, report.active_groups - report.attempted_groups)
+    failed = max(0, report.attempted_groups - report.delivered_groups - report.blocked_groups)
+    text = (
+        "📨 Охирги юбориш ҳисоботи\n"
+        f"🕒 {_format_until(report.completed_at)}\n\n"
+        f"✅ Юборилди: {report.delivered_groups} та\n"
+        f"⏳ Кутмоқда / навбати келмаган: {pending} та\n"
+        f"🔒 Ёзиш ҳуқуқи йўқ: {report.blocked_groups} та\n"
+        f"⚠️ Етказилмаган / қайта уриниш керак: {failed} та\n\n"
+        "Бу охирги ишлов натижаси. Ҳар бир гуруҳ ўз вақти бўйича юборилади."
+    )
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔄 Янгилаш", callback_data="deliveryreport")
+    ]]))
+
+
+@router.callback_query(F.data == "deliveryreport")
+async def refresh_delivery_report(callback: CallbackQuery):
+    await callback.answer()
+    # Callback messages are authored by the bot; use the real requesting user.
+    status = await get_user_delivery_status(callback.from_user.id)
+    report = status["report"]
+    if report is None:
+        await callback.message.answer("📨 Ҳали юбориш натижаси йўқ.")
+        return
+    await callback.message.answer(
+        f"📨 {_format_until(report.completed_at)}\n"
+        f"✅ Юборилди: {report.delivered_groups}\n"
+        f"⏳ Кутмоқда: {max(0, report.active_groups - report.attempted_groups)}\n"
+        f"🔒 Рухсат йўқ: {report.blocked_groups}\n"
+        f"⚠️ Етказилмаган: {max(0, report.attempted_groups - report.delivered_groups - report.blocked_groups)}"
+    )
 
 
 async def _show_payment_request(message: Message, state: FSMContext):
@@ -1233,31 +1282,59 @@ async def admin_running_users(message: Message):
     if not _is_admin(message):
         await message.answer("Рухсат йўқ.")
         return
-    users = await list_running_user_summaries(limit=50)
+    await _show_running_page(message, 0)
+
+
+async def _show_running_page(message: Message, page: int):
+    page = max(0, page)
+    try:
+        users = await asyncio.wait_for(list_running_user_summaries(limit=21, offset=page * 20), timeout=8)
+    except (SQLAlchemyError, asyncio.TimeoutError):
+        logger.exception("Running users query failed")
+        await message.answer("⚠️ Рўйхатни юклаб бўлмади. Қайта босиб кўринг.")
+        return
+    has_next = len(users) > 20
+    users = users[:20]
     if not users:
         await message.answer(
-            "⏸ Ҳозир ҳеч ким гуруҳларга авто хабар юбормаяпти.",
+            "⏸ Бу саҳифада ишлаётган профил йўқ. Биринчи саҳифани қайта очинг.",
             reply_markup=admin_users_filter_kb(),
         )
         return
-    lines = [f"🚀 <b>Ҳозир ишлаётганлар</b>\nЖами: {len(users)} та\n"]
+    lines = [f"🚀 <b>Ҳозир ишлаётганлар</b> · {page + 1}-саҳифа\n"]
     for item in users:
         status = (
-            f"⚠️ {html.escape(str(item['issue_details']))}"
+            "⚠️ Муаммо бор — картасини очинг"
             if item["issue_details"]
             else "✅ ишлаяпти"
         )
         lines.append(
-            f"👤 {html.escape(str(item['first_name']))} · {item['user_id']}\n"
+            f"👤 {html.escape(str(item['first_name'])[:32])} · {item['user_id']}\n"
             f"👥 Гуруҳлар: {item['groups_count']} та | "
-            f"⏱ Ҳар {_interval_label(item['interval_minutes'])}\n"
-            f"Ҳолат: {status}"
+            f"⏱ {_interval_label(item['interval_minutes'])} | {status}"
         )
+    markup = admin_user_results_kb(users)
+    navigation = []
+    if page:
+        navigation.append(InlineKeyboardButton(text="⬅️", callback_data=f"runningpage:{page - 1}"))
+    navigation.append(InlineKeyboardButton(text="🔄", callback_data=f"runningpage:{page}"))
+    if has_next:
+        navigation.append(InlineKeyboardButton(text="➡️", callback_data=f"runningpage:{page + 1}"))
+    markup.inline_keyboard.append(navigation)
     await message.answer(
         "\n\n".join(lines),
-        reply_markup=admin_user_results_kb(users),
+        reply_markup=markup,
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data.startswith("runningpage:"))
+async def running_users_page(callback: CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    await callback.answer()
+    await _show_running_page(callback.message, int(callback.data.split(":")[1]))
 
 
 @router.message(F.text.in_(EXPIRING_USERS_TEXTS))
@@ -1702,12 +1779,28 @@ def _support_ticket_text(ticket, position: int, total: int) -> str:
     return (
         f"🆘 <b>Ёрдам навбати: {position}/{total}</b>\n"
         f"Мурожаат №{ticket.id}\n\n"
+        f"Ҳолат: {'Админ кўриб чиқмоқда' if ticket.status == 'processing' else 'Навбатда'}\n"
         f"Фойдаланувчи: {html.escape(ticket.full_name)}\n"
         f"Username: {html.escape(username)}\n"
         f"ID: <code>{ticket.user_id}</code>\n"
         f"Келган вақт: {format_tashkent_time(ticket.created_at)}\n\n"
         f"📝 {html.escape(ticket.preview)}"
     )
+
+
+@router.message(F.text == "📋 Мурожаатим ҳолати")
+async def show_my_support_status(message: Message):
+    ticket, position = await get_user_support_status(message.from_user.id)
+    if ticket is None:
+        await message.answer("📋 Ҳали мурожаатингиз йўқ. «Админ билан боғланиш» орқали ёзинг.")
+        return
+    label = {"open": "⏳ Навбатда", "processing": "✍️ Админ кўриб чиқмоқда", "resolved": "✅ Ёпилди"}.get(ticket.status, ticket.status)
+    text = f"📋 Охирги мурожаатингиз №{ticket.id}\n{label}\nКелган вақт: {_format_until(ticket.created_at)}"
+    if position:
+        text += f"\nНавбатдаги ўрнингиз: {position}"
+    if ticket.resolved_at:
+        text += f"\nЁпилган вақт: {_format_until(ticket.resolved_at)}"
+    await message.answer(text)
 
 
 async def _show_next_support_ticket(message: Message) -> None:
@@ -1824,7 +1917,7 @@ async def ask_support_ticket_reply(callback: CallbackQuery, state: FSMContext):
         return
     ticket_id = int(callback.data.split(":", 1)[1])
     ticket = await get_support_ticket(ticket_id)
-    if ticket is None or ticket.status != "open":
+    if ticket is None or ticket.status not in ("open", "processing"):
         await callback.answer("Бу мурожаат аллақачон ёпилган.", show_alert=True)
         return
     tickets = await list_open_support_tickets(limit=1)
@@ -1836,6 +1929,7 @@ async def ask_support_ticket_reply(callback: CallbackQuery, state: FSMContext):
         support_ticket_id=ticket.id,
     )
     await state.set_state(AdStates.waiting_support_reply)
+    await mark_support_processing(ticket.id)
     await callback.message.answer(
         f"✍️ Мурожаат №{ticket.id} учун жавоб ёзинг.\n"
         f"ID: {ticket.user_id}\n\n"

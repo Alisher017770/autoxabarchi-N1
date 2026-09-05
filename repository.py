@@ -130,7 +130,7 @@ async def create_support_ticket(
         position = int(await session.scalar(
             select(func.count())
             .select_from(SupportTicket)
-            .where(SupportTicket.status == "open")
+            .where(SupportTicket.status.in_(("open", "processing")))
             .where(
                 (SupportTicket.created_at < ticket.created_at)
                 | (
@@ -148,7 +148,7 @@ async def list_open_support_tickets(limit: int = 20) -> list[SupportTicket]:
     async with async_session() as session:
         result = await session.execute(
             select(SupportTicket)
-            .where(SupportTicket.status == "open")
+            .where(SupportTicket.status.in_(("open", "processing")))
             .order_by(SupportTicket.created_at, SupportTicket.id)
             .limit(limit)
         )
@@ -163,7 +163,7 @@ async def get_support_ticket(ticket_id: int) -> SupportTicket | None:
 async def resolve_support_ticket(ticket_id: int, resolved_by: int) -> bool:
     async with async_session() as session:
         ticket = await session.get(SupportTicket, ticket_id)
-        if ticket is None or ticket.status != "open":
+        if ticket is None or ticket.status not in ("open", "processing"):
             return False
         ticket.status = "resolved"
         ticket.resolved_at = utc_now()
@@ -1039,7 +1039,7 @@ async def list_problem_users(limit: int = 20) -> list[dict]:
         return items
 
 
-async def list_running_user_summaries(limit: int = 50) -> list[dict]:
+async def list_running_user_summaries(limit: int = 20, offset: int = 0) -> list[dict]:
     async with async_session() as session:
         group_counts = (
             select(Group.profile, func.count(Group.id).label("groups_count"))
@@ -1047,24 +1047,50 @@ async def list_running_user_summaries(limit: int = 50) -> list[dict]:
             .subquery()
         )
         result = await session.execute(
-            select(UserAccount, Settings, BroadcastIssue, group_counts.c.groups_count)
+            select(UserAccount.user_id, UserAccount.first_name, Settings.interval_minutes,
+                   BroadcastIssue.details, group_counts.c.groups_count)
             .join(Settings, Settings.profile == cast(UserAccount.user_id, String))
             .outerjoin(BroadcastIssue, BroadcastIssue.profile == Settings.profile)
             .outerjoin(group_counts, group_counts.c.profile == Settings.profile)
             .where(Settings.is_running.is_(True))
-            .order_by(UserAccount.updated_at.desc())
+            .order_by(UserAccount.user_id)
+            .offset(max(0, offset))
             .limit(limit)
         )
         return [
             {
-                "user_id": account.user_id,
-                "first_name": account.first_name or "-",
+                "user_id": user_id,
+                "first_name": first_name or "-",
                 "groups_count": int(groups_count or 0),
-                "interval_minutes": settings.interval_minutes,
-                "issue_details": issue.details if issue else None,
+                "interval_minutes": interval_minutes,
+                "issue_details": details,
             }
-            for account, settings, issue, groups_count in result.all()
+            for user_id, first_name, interval_minutes, details, groups_count in result.all()
         ]
+
+
+async def get_user_support_status(user_id: int) -> tuple[SupportTicket | None, int]:
+    async with async_session() as session:
+        ticket = await session.scalar(select(SupportTicket).where(
+            SupportTicket.user_id == user_id
+        ).order_by(SupportTicket.id.desc()).limit(1))
+        position = 0
+        if ticket and ticket.status in ("open", "processing"):
+            position = int(await session.scalar(select(func.count()).select_from(SupportTicket).where(
+                SupportTicket.status.in_(("open", "processing")),
+                (SupportTicket.created_at < ticket.created_at) | (
+                    (SupportTicket.created_at == ticket.created_at) & (SupportTicket.id <= ticket.id)
+                ),
+            )) or 0)
+        return ticket, position
+
+
+async def mark_support_processing(ticket_id: int) -> None:
+    async with async_session() as session:
+        await session.execute(update(SupportTicket).where(
+            SupportTicket.id == ticket_id, SupportTicket.status == "open"
+        ).values(status="processing"))
+        await session.commit()
 
 
 async def list_expiring_user_summaries(days_left: int, limit: int = 20) -> list[dict]:
