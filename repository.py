@@ -1069,6 +1069,15 @@ async def list_running_user_summaries(limit: int = 20, offset: int = 0) -> list[
         ]
 
 
+async def count_running_users() -> int:
+    async with async_session() as session:
+        return int(await session.scalar(
+            select(func.count()).select_from(UserAccount)
+            .join(Settings, Settings.profile == cast(UserAccount.user_id, String))
+            .where(Settings.is_running.is_(True))
+        ) or 0)
+
+
 async def get_user_support_status(user_id: int) -> tuple[SupportTicket | None, int]:
     async with async_session() as session:
         ticket = await session.scalar(select(SupportTicket).where(

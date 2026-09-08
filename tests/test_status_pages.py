@@ -14,10 +14,13 @@ class StatusPageTests(unittest.IsolatedAsyncioTestCase):
                       groups_count=999, interval_minutes=15, issue_details="error"*1000)
                  for i in range(21)]
         message = SimpleNamespace(answer=AsyncMock())
-        with patch.object(pro, "list_running_user_summaries", AsyncMock(return_value=users)) as query:
+        with patch.object(pro, "list_running_user_summaries", AsyncMock(return_value=users)) as query, \
+             patch.object(pro, "count_running_users", AsyncMock(return_value=57)):
             await pro._show_running_page(message, 0)
         query.assert_awaited_once_with(limit=21, offset=0)
         call = message.answer.await_args
+        self.assertIn("Жами автохабар ёқилган: 57", call.args[0])
+        self.assertIn("1/3-саҳифа", call.args[0])
         rendered = html.unescape(call.args[0].replace("<b>", "").replace("</b>", ""))
         self.assertLess(len(rendered.encode("utf-16-le")) // 2, 4096)
         buttons = [b.callback_data for row in call.kwargs["reply_markup"].inline_keyboard for b in row]
@@ -55,3 +58,20 @@ class StatusPageTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Юборилди: 10", text)
         self.assertIn("навбати келмаган: 6", text)
         self.assertIn("қайта уриниш керак: 2", text)
+
+    async def test_profile_lookup_is_admin_only(self):
+        callback = SimpleNamespace(from_user=SimpleNamespace(id=12), answer=AsyncMock(), data="userprofile:99")
+        bot = SimpleNamespace(get_chat=AsyncMock())
+        with patch.object(pro, "_admin_ids", {1}):
+            await pro.open_admin_user_profile(callback, bot)
+        bot.get_chat.assert_not_awaited()
+
+    async def test_private_profile_keeps_bot_reply_available(self):
+        callback = SimpleNamespace(from_user=SimpleNamespace(id=1), answer=AsyncMock(),
+                                   message=SimpleNamespace(answer=AsyncMock()), data="userprofile:99")
+        bot = SimpleNamespace(get_chat=AsyncMock(side_effect=TimeoutError))
+        with patch.object(pro, "_admin_ids", {1}):
+            await pro.open_admin_user_profile(callback, bot)
+        buttons = [b for row in callback.message.answer.await_args.kwargs["reply_markup"].inline_keyboard for b in row]
+        self.assertEqual("supportreply:99", buttons[0].callback_data)
+        self.assertTrue(all(b.url is None for b in buttons))

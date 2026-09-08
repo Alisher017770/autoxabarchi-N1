@@ -73,6 +73,7 @@ from repository import (
     add_group,
     create_pending_payment,
     count_users_by_subscription,
+    count_running_users,
     create_support_ticket,
     ensure_user,
     get_admin_stats,
@@ -1154,6 +1155,35 @@ async def _send_admin_user_card(target: Message, user_id: int, edit: bool = Fals
         await target.answer(_admin_user_card_text(item), **kwargs)
 
 
+@router.callback_query(F.data.startswith("userprofile:"))
+async def open_admin_user_profile(callback: CallbackQuery, bot: Bot):
+    if not _is_admin(callback):
+        await callback.answer("Рухсат йўқ.", show_alert=True)
+        return
+    await callback.answer()
+    user_id = int(callback.data.split(":", 1)[1])
+    username = None
+    try:
+        chat = await asyncio.wait_for(bot.get_chat(user_id), timeout=5)
+        username = chat.username
+    except Exception:
+        logger.warning("Could not resolve Telegram username for %s", user_id)
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✉️ Бот орқали ёзиш", callback_data=f"supportreply:{user_id}")
+    ]])
+    if username:
+        markup.inline_keyboard.insert(0, [InlineKeyboardButton(
+            text="👤 Профилни очиш", url=f"https://t.me/{username}"
+        )])
+        text = f"👤 Telegram профили: @{html.escape(username)}"
+    else:
+        text = (f'👤 <a href="tg://user?id={user_id}">Telegram профилини очиш</a>\n'
+                f"ID: <code>{user_id}</code>\n\n"
+                "Профил очилмаса, Telegram махфийлик созламалари чеклаган бўлиши мумкин. "
+                "Қуйидаги тугма орқали ботдан ёзинг.")
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=markup)
+
+
 def _admin_group_status_text(user_id: int, groups: list[dict]) -> str:
     if not groups:
         return "📡 <b>Гуруҳлар ҳолати</b>\n\nҲозирча гуруҳ йўқ."
@@ -1289,6 +1319,7 @@ async def _show_running_page(message: Message, page: int):
     page = max(0, page)
     try:
         users = await asyncio.wait_for(list_running_user_summaries(limit=21, offset=page * 20), timeout=8)
+        total = await asyncio.wait_for(count_running_users(), timeout=8)
     except (SQLAlchemyError, asyncio.TimeoutError):
         logger.exception("Running users query failed")
         await message.answer("⚠️ Рўйхатни юклаб бўлмади. Қайта босиб кўринг.")
@@ -1297,11 +1328,12 @@ async def _show_running_page(message: Message, page: int):
     users = users[:20]
     if not users:
         await message.answer(
-            "⏸ Бу саҳифада ишлаётган профил йўқ. Биринчи саҳифани қайта очинг.",
+            f"Жами автохабар ёқилган: {total} та.\n⏸ Бу саҳифа бўш. Биринчи саҳифани қайта очинг.",
             reply_markup=admin_users_filter_kb(),
         )
         return
-    lines = [f"🚀 <b>Ҳозир ишлаётганлар</b> · {page + 1}-саҳифа\n"]
+    lines = [f"🚀 <b>Ҳозир ишлаётганлар</b>\nЖами автохабар ёқилган: {total} та\n"
+             f"📄 {page + 1}/{max(1, (total + 19) // 20)}-саҳифа\n"]
     for item in users:
         status = (
             "⚠️ Муаммо бор — картасини очинг"

@@ -403,6 +403,8 @@ def admin_user_results_kb(users: list[dict]) -> InlineKeyboardMarkup:
 
 def admin_user_card_kb(user_id: int, active: bool) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    kb.button(text="👤 Telegram профили", callback_data=f"userprofile:{user_id}")
+    kb.button(text="✉️ Бот орқали ёзиш", callback_data=f"supportreply:{user_id}")
     kb.button(text="🎟 30 кун узайтириш", callback_data=f"userextend:{user_id}:30")
     if active:
         kb.button(text="🚫 Обунани ўчириш", callback_data=f"userrevoke:{user_id}")
