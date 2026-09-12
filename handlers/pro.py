@@ -81,6 +81,7 @@ from repository import (
     get_admin_user_card,
     list_admin_group_statuses,
     get_broadcast_issue,
+    get_bot_config_value,
     get_user_delivery_status,
     get_payment_config,
     get_railway_billing_status,
@@ -2809,18 +2810,31 @@ async def show_interval(message: Message):
     )
 
 
+_interval_warning_lock = asyncio.Lock()
+
+
+async def _warn_low_interval_once(message: Message, minutes: int, *, already_running: bool = False) -> bool:
+    if not is_high_spam_risk_interval(minutes):
+        return False
+    key = f"interval_warned:{message.from_user.id}"
+    async with _interval_warning_lock:
+        if await get_bot_config_value(key):
+            return False
+        await message.answer(
+            low_interval_warning_text(minutes, already_running=already_running),
+            parse_mode="HTML",
+        )
+        await set_bot_config(key, "1")
+    return True
+
+
 @router.message(F.text.in_(set(INTERVAL_PRESETS)))
 async def set_interval_preset(message: Message):
     if not await _ensure_user_access(message):
         return
     minutes = INTERVAL_PRESETS[message.text]
     await set_interval(_key(message), minutes)
-    if is_high_spam_risk_interval(minutes):
-        await message.answer(
-            low_interval_warning_text(minutes),
-            parse_mode="HTML",
-            reply_markup=settings_kb(),
-        )
+    if await _warn_low_interval_once(message, minutes):
         return
     await message.answer(
         f"✅ Вақт танланди: {_interval_label(minutes)}\n\n"
@@ -2843,12 +2857,7 @@ async def set_interval_message(message: Message):
     number = int(re.search(r"\d+", message.text or "").group())
     minutes = number * 60 if ("soat" in message.text or "соат" in message.text) else number
     await set_interval(_key(message), minutes)
-    if is_high_spam_risk_interval(minutes):
-        await message.answer(
-            low_interval_warning_text(minutes),
-            parse_mode="HTML",
-            reply_markup=settings_kb(),
-        )
+    if await _warn_low_interval_once(message, minutes):
         return
     await message.answer(f"✅ Вақт янгиланди: {_interval_label(minutes)}", reply_markup=settings_kb())
 
@@ -2907,12 +2916,7 @@ async def start_or_stop(message: Message, state: FSMContext):
         "⏹ 12 соатдан кейин автоматик тўхтайди. Қайта бошлаш учун «🚀 Старт / Стоп» ни босинг.",
         reply_markup=await _main_kb(message),
     )
-    if is_high_spam_risk_interval(settings_row.interval_minutes):
-        await message.answer(
-            low_interval_warning_text(settings_row.interval_minutes, already_running=True),
-            parse_mode="HTML",
-            reply_markup=await _main_kb(message),
-        )
+    await _warn_low_interval_once(message, settings_row.interval_minutes, already_running=True)
 
 
 @router.callback_query(F.data.startswith("retryspam:"))

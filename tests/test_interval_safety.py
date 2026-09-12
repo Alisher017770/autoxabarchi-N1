@@ -26,3 +26,31 @@ class IntervalSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WarningOnceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_warning_is_remembered_across_interval_and_start(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from handlers import pro
+        saved = {}
+        async def read(key):
+            return saved.get(key)
+        async def write(key, value):
+            saved[key] = value
+        message = SimpleNamespace(from_user=SimpleNamespace(id=123), answer=AsyncMock())
+        with patch.object(pro, "get_bot_config_value", read), patch.object(pro, "set_bot_config", write):
+            self.assertTrue(await pro._warn_low_interval_once(message, 4))
+            self.assertFalse(await pro._warn_low_interval_once(message, 3, already_running=True))
+            self.assertFalse(await pro._warn_low_interval_once(message, 15))
+        message.answer.assert_awaited_once()
+
+    async def test_failed_delivery_is_not_marked_seen(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from handlers import pro
+        message = SimpleNamespace(from_user=SimpleNamespace(id=124), answer=AsyncMock(side_effect=RuntimeError))
+        with patch.object(pro, "get_bot_config_value", AsyncMock(return_value=None)), patch.object(pro, "set_bot_config", AsyncMock()) as save:
+            with self.assertRaises(RuntimeError):
+                await pro._warn_low_interval_once(message, 4)
+        save.assert_not_awaited()
