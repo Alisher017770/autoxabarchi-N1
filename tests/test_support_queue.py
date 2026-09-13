@@ -114,6 +114,8 @@ class SupportQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(callback.answer.await_args.kwargs["show_alert"])
 
     async def test_temporary_reply_failure_keeps_recipient_and_ticket(self):
+        ticket, _ = await create_support_ticket(7001, "First", None, "Help")
+        await pro.claim_support_ticket(ticket.id, 9001)
         message = SimpleNamespace(
             from_user=SimpleNamespace(id=9001), text="Javob", photo=None,
             document=None, video=None, voice=None, answer=AsyncMock(),
@@ -122,7 +124,7 @@ class SupportQueueTests(unittest.IsolatedAsyncioTestCase):
             )),
         )
         state = SimpleNamespace(
-            get_data=AsyncMock(return_value={"support_reply_user_id": 7001, "support_ticket_id": 77}),
+            get_data=AsyncMock(return_value={"support_reply_user_id": 7001, "support_ticket_id": ticket.id}),
             clear=AsyncMock(),
         )
         with (
@@ -178,6 +180,8 @@ class SupportQueueTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_reply_resolves_ticket_and_opens_next(self):
+        ticket, _ = await create_support_ticket(7001, "First", None, "Help")
+        await pro.claim_support_ticket(ticket.id, 9001)
         message = SimpleNamespace(
             from_user=SimpleNamespace(id=9001),
             text="Текшириб тўғриладик",
@@ -189,7 +193,7 @@ class SupportQueueTests(unittest.IsolatedAsyncioTestCase):
             answer=AsyncMock(),
         )
         state = SimpleNamespace(
-            get_data=AsyncMock(return_value={"support_reply_user_id": 7001, "support_ticket_id": 77}),
+            get_data=AsyncMock(return_value={"support_reply_user_id": 7001, "support_ticket_id": ticket.id}),
             clear=AsyncMock(),
         )
         bot = SimpleNamespace(send_message=AsyncMock())
@@ -202,7 +206,7 @@ class SupportQueueTests(unittest.IsolatedAsyncioTestCase):
         ):
             await pro.receive_support_reply(message, state, bot)
 
-        resolve.assert_awaited_once_with(77, 9001)
+        resolve.assert_awaited_once_with(ticket.id, 9001)
         show_next.assert_awaited_once_with(message)
 
 

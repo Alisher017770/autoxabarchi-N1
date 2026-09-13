@@ -27,7 +27,10 @@ class GroupFolderAddTests(unittest.IsolatedAsyncioTestCase):
         )
 
         try:
-            with patch.object(pro, "add_group", AsyncMock(side_effect=[True, False])) as add_group:
+            with (
+                patch.object(pro, "_ensure_group_callback_access", AsyncMock(return_value=True)),
+                patch.object(pro, "add_group", AsyncMock(side_effect=[True, False])) as add_group,
+            ):
                 await pro.add_groups_from_folder(callback)
         finally:
             pro._group_folder_dialogs.pop(user_id, None)

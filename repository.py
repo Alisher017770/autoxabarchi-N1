@@ -162,14 +162,42 @@ async def get_support_ticket(ticket_id: int) -> SupportTicket | None:
 
 async def resolve_support_ticket(ticket_id: int, resolved_by: int) -> bool:
     async with async_session() as session:
-        ticket = await session.get(SupportTicket, ticket_id)
-        if ticket is None or ticket.status not in ("open", "processing"):
-            return False
-        ticket.status = "resolved"
-        ticket.resolved_at = utc_now()
-        ticket.resolved_by = resolved_by
+        result = await session.execute(update(SupportTicket).where(
+            SupportTicket.id == ticket_id,
+            SupportTicket.status.in_(("open", "processing")),
+            or_(SupportTicket.claimed_by.is_(None),
+                SupportTicket.claimed_by == resolved_by,
+                SupportTicket.claim_until < utc_now()),
+        ).values(status="resolved", resolved_at=utc_now(), resolved_by=resolved_by,
+                 claimed_by=None, claim_until=None))
         await session.commit()
-        return True
+        return bool(result.rowcount)
+
+
+async def claim_support_ticket(ticket_id: int, admin_id: int, *, renew_only: bool = False) -> bool:
+    """Atomically reserve a queued reply; expired claims survive no longer than 15 min."""
+    now = utc_now()
+    ownership = SupportTicket.claimed_by == admin_id
+    if not renew_only:
+        ownership = or_(ownership, SupportTicket.claimed_by.is_(None),
+                        SupportTicket.claim_until < now)
+    async with async_session() as session:
+        result = await session.execute(update(SupportTicket).where(
+            SupportTicket.id == ticket_id,
+            SupportTicket.status.in_(("open", "processing")), ownership,
+        ).values(status="processing", claimed_by=admin_id,
+                 claim_until=now + timedelta(minutes=15)))
+        await session.commit()
+        return bool(result.rowcount)
+
+
+async def release_support_ticket(ticket_id: int, admin_id: int) -> None:
+    async with async_session() as session:
+        await session.execute(update(SupportTicket).where(
+            SupportTicket.id == ticket_id, SupportTicket.status == "processing",
+            SupportTicket.claimed_by == admin_id,
+        ).values(status="open", claimed_by=None, claim_until=None))
+        await session.commit()
 
 
 def parse_money_amount(value: str | None) -> int:

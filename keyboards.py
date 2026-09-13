@@ -401,12 +401,13 @@ def admin_user_results_kb(users: list[dict]) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def admin_user_card_kb(user_id: int, active: bool) -> InlineKeyboardMarkup:
+def admin_user_card_kb(user_id: int, active: bool, is_owner: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="👤 Telegram профили", callback_data=f"userprofile:{user_id}")
     kb.button(text="✉️ Бот орқали ёзиш", callback_data=f"supportreply:{user_id}")
-    kb.button(text="🎟 30 кун узайтириш", callback_data=f"userextend:{user_id}:30")
-    if active:
+    if is_owner:
+        kb.button(text="🎟 30 кун узайтириш", callback_data=f"userextend:{user_id}:30")
+    if active and is_owner:
         kb.button(text="🚫 Обунани ўчириш", callback_data=f"userrevoke:{user_id}")
     kb.button(text="📡 Гуруҳлар ҳолати", callback_data=f"usergroups:{user_id}")
     kb.button(text="🔄 Янгилаш", callback_data=f"usercard:{user_id}")

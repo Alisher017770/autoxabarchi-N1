@@ -90,7 +90,8 @@ from repository import (
     get_settings,
     get_support_ticket,
     get_user_support_status,
-    mark_support_processing,
+    claim_support_ticket,
+    release_support_ticket,
     get_user_account,
     has_active_subscription,
     list_expiring_user_summaries,
@@ -305,6 +306,10 @@ async def _handle_reserved_menu(message: Message, state: FSMContext) -> bool:
     if text not in RESERVED_MESSAGE_TEXTS:
         return False
 
+    if _is_admin(message):
+        previous = await state.get_data()
+        if previous.get("support_ticket_id") is not None:
+            await release_support_ticket(int(previous["support_ticket_id"]), message.from_user.id)
     await state.clear()
     if text == "📨 Юбориш ҳисоботи":
         await show_delivery_report(message)
@@ -588,6 +593,17 @@ async def _send_next_step(message: Message):
     await message.answer(text, reply_markup=await _main_kb(message))
 
 
+async def _ensure_group_callback_access(callback: CallbackQuery) -> bool:
+    account = await get_user_account(callback.from_user.id)
+    if not account or not account.session_string:
+        await callback.answer("Аввал Telegram профилингизни уланг.", show_alert=True)
+        return False
+    if not await has_active_subscription(callback.from_user.id):
+        await callback.answer("Гуруҳ қўшиш учун фаол обуна керак.", show_alert=True)
+        return False
+    return True
+
+
 async def _ensure_user_access(message: Message, state: FSMContext | None = None) -> bool:
     account = await get_user_account(message.from_user.id)
     if not account or not account.session_string:
@@ -630,7 +646,7 @@ async def receive_admin_user_search(message: Message, state: FSMContext):
         await message.answer("❌ Фойдаланувчи топилмади.", reply_markup=admin_users_filter_kb())
         return
     if len(users) == 1:
-        await _send_admin_user_card(message, int(users[0]["user_id"]))
+        await _send_admin_user_card(message, int(users[0]["user_id"]), is_owner=_is_owner(message))
         return
     await message.answer(
         f"🔎 Натижа: {len(users)} та. Керакли одамни танланг:",
@@ -1137,7 +1153,7 @@ def _admin_user_card_text(item: dict) -> str:
     )
 
 
-async def _send_admin_user_card(target: Message, user_id: int, edit: bool = False):
+async def _send_admin_user_card(target: Message, user_id: int, edit: bool = False, *, is_owner: bool = False):
     item = await get_admin_user_card(user_id)
     if not item:
         if edit:
@@ -1146,7 +1162,7 @@ async def _send_admin_user_card(target: Message, user_id: int, edit: bool = Fals
             await target.answer("❌ Фойдаланувчи топилмади.", reply_markup=admin_users_filter_kb())
         return
     kwargs = {
-        "reply_markup": admin_user_card_kb(user_id, item["active"]),
+        "reply_markup": admin_user_card_kb(user_id, item["active"], is_owner),
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
@@ -1224,7 +1240,7 @@ async def admin_user_card_callback(callback: CallbackQuery):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     user_id = int(callback.data.split(":", 1)[1])
-    await _send_admin_user_card(callback.message, user_id, edit=True)
+    await _send_admin_user_card(callback.message, user_id, edit=True, is_owner=_is_owner(callback))
     await callback.answer()
 
 
@@ -1258,7 +1274,7 @@ async def admin_user_extend_callback(callback: CallbackQuery, bot: Bot):
         )
     except Exception:
         pass
-    await _send_admin_user_card(callback.message, user_id, edit=True)
+    await _send_admin_user_card(callback.message, user_id, edit=True, is_owner=_is_owner(callback))
     await callback.answer(f"{days} кунга узайтирилди")
 
 
@@ -1284,7 +1300,7 @@ async def admin_user_revoke_callback(callback: CallbackQuery, bot: Bot):
         await bot.send_message(user_id, "🚫 Обунангиз админ томонидан ўчирилди.")
     except Exception:
         pass
-    await _send_admin_user_card(callback.message, user_id, edit=True)
+    await _send_admin_user_card(callback.message, user_id, edit=True, is_owner=_is_owner(callback))
     await callback.answer("Обуна ўчирилди")
 
 
@@ -1957,12 +1973,14 @@ async def ask_support_ticket_reply(callback: CallbackQuery, state: FSMContext):
     if not tickets or tickets[0].id != ticket_id:
         await callback.answer("Аввал навбатдаги биринчи мурожаатга жавоб беринг.", show_alert=True)
         return
+    if not await claim_support_ticket(ticket.id, callback.from_user.id):
+        await callback.answer("Бу мурожаатга бошқа админ жавоб беряпти.", show_alert=True)
+        return
     await state.update_data(
         support_reply_user_id=ticket.user_id,
         support_ticket_id=ticket.id,
     )
     await state.set_state(AdStates.waiting_support_reply)
-    await mark_support_processing(ticket.id)
     await callback.message.answer(
         f"✍️ Мурожаат №{ticket.id} учун жавоб ёзинг.\n"
         f"ID: {ticket.user_id}\n\n"
@@ -1980,7 +1998,7 @@ async def resolve_support_ticket_without_reply(callback: CallbackQuery):
     ticket_id = int(callback.data.split(":", 1)[1])
     resolved = await resolve_support_ticket(ticket_id, callback.from_user.id)
     if not resolved:
-        await callback.answer("Бу мурожаат аллақачон ёпилган.", show_alert=True)
+        await callback.answer("Мурожаат ёпилган ёки бошқа админ жавоб беряпти.", show_alert=True)
         return
     await callback.message.edit_text(f"✅ Мурожаат №{ticket_id} ҳал қилинди.")
     await callback.answer("Ёпилди")
@@ -1993,6 +2011,9 @@ async def ask_support_reply(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Рухсат йўқ.", show_alert=True)
         return
     user_id = int(callback.data.split(":", 1)[1])
+    previous = await state.get_data()
+    if previous.get("support_ticket_id") is not None:
+        await release_support_ticket(int(previous["support_ticket_id"]), callback.from_user.id)
     await state.update_data(support_reply_user_id=user_id, support_ticket_id=None)
     await state.set_state(AdStates.waiting_support_reply)
     await callback.message.answer(
@@ -2024,11 +2045,21 @@ async def receive_support_reply(message: Message, state: FSMContext, bot: Bot):
         return
     user_id = int(data["support_reply_user_id"])
     ticket_id = data.get("support_ticket_id")
+    if ticket_id is not None and not await claim_support_ticket(
+        int(ticket_id), message.from_user.id, renew_only=True
+    ):
+        await state.clear()
+        await message.answer("⚠️ Мурожаат ҳолати ўзгарган. Ёрдам навбатини қайта очинг.",
+                             reply_markup=_admin_kb(message))
+        return
     try:
-        await bot.send_message(user_id, "✉️ Админдан жавоб:")
-        await message.copy_to(user_id)
+        async with asyncio.timeout(60):
+            await bot.send_message(user_id, "✉️ Админдан жавоб:")
+            await message.copy_to(user_id)
     except TelegramForbiddenError:
         logger.exception("Support reply could not be delivered to user %s", user_id)
+        if ticket_id is not None:
+            await release_support_ticket(int(ticket_id), message.from_user.id)
         await message.answer(
             "❌ Telegram бу фойдаланувчига хабар юборишга рухсат бермади. "
             "У ботни блоклаган бўлиши мумкин. Мурожаат навбатда сақланди.",
@@ -2415,6 +2446,10 @@ async def groups_add_from_folder(message: Message):
     except RuntimeError as exc:
         await progress.edit_text(f"❌ Хато: {exc}")
         return
+    except Exception:
+        logger.exception("Folder loading failed for user %s", message.from_user.id)
+        await progress.edit_text("❌ Папкаларни олиб бўлмади. Кейинроқ қайта уриниб кўринг.")
+        return
     if not folders:
         await progress.edit_text(
             "📁 Гуруҳли Telegram папкаси топилмади.\n\n"
@@ -2432,26 +2467,29 @@ async def groups_add_from_folder(message: Message):
 
 @router.callback_query(F.data.startswith("addfolder:"))
 async def add_groups_from_folder(callback: CallbackQuery):
+    if not await _ensure_group_callback_access(callback):
+        return
     try:
         folder_id = int(callback.data.split(":", 1)[1])
     except (TypeError, ValueError):
         await callback.answer("Нотўғри папка.", show_alert=True)
         return
     folders = _group_folder_dialogs.get(callback.from_user.id)
+    await callback.answer("Гуруҳлар текширилмоқда...")
     if not folders or folder_id not in folders:
         try:
             fresh = await get_user_dialog_folders(callback.from_user.id)
-        except RuntimeError as exc:
-            await callback.answer(str(exc), show_alert=True)
+        except Exception:
+            logger.exception("Folder refresh failed for user %s", callback.from_user.id)
+            await callback.message.answer("❌ Папкаларни олиб бўлмади. Папкалар бўлимига қайта киринг.")
             return
         folders = {int(folder["id"]): folder for folder in fresh}
         _group_folder_dialogs[callback.from_user.id] = folders
     folder = folders.get(folder_id)
     if not folder:
-        await callback.answer("Папка топилмади.", show_alert=True)
+        await callback.message.answer("Папка топилмади. Папкалар бўлимига қайта киринг.")
         return
 
-    await callback.answer("Гуруҳлар қўшилмоқда...")
     added_count = 0
     duplicate_count = 0
     restricted_count = 0
@@ -2580,8 +2618,14 @@ async def groups_add_all(message: Message):
 
 @router.callback_query(F.data.startswith("addgroup:"))
 async def add_group_cb(callback: CallbackQuery):
+    if not await _ensure_group_callback_access(callback):
+        return
     parts = callback.data.split(":")
-    chat_id = int(parts[1])
+    try:
+        chat_id = int(parts[1])
+    except (ValueError, IndexError):
+        await callback.answer("Нотўғри гуруҳ.", show_alert=True)
+        return
     try:
         list_page = int(parts[2]) if len(parts) > 2 else 0
     except ValueError:
@@ -2589,20 +2633,30 @@ async def add_group_cb(callback: CallbackQuery):
     # The menu already loaded these dialogs. Reuse them so every button press
     # does not reconnect to Telegram and appear frozen.
     dialogs = _group_card_dialogs.get(callback.from_user.id)
+    acknowledged = dialogs is None
     if dialogs is None:
+        await callback.answer("Гуруҳлар текширилмоқда...")
         try:
             dialogs = await get_user_dialog_groups(callback.from_user.id)
         except RuntimeError as exc:
             await callback.message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
-            await callback.answer()
             return
+        except Exception:
+            logger.exception("Group refresh failed for user %s", callback.from_user.id)
+            await callback.message.answer("❌ Гуруҳларни олиб бўлмади. Қайта уриниб кўринг.")
+            return
+        _group_card_dialogs[callback.from_user.id] = dialogs
     dialog = next((dialog for dialog in dialogs if dialog["chat_id"] == chat_id), None)
     if dialog is None or not dialog.get("text_allowed", True):
-        await callback.answer("Bu guruhda matn yozish mumkin emas", show_alert=True)
+        if acknowledged:
+            await callback.message.answer("Бу гуруҳ топилмади ёки матн ёзиш мумкин эмас.")
+        else:
+            await callback.answer("Bu guruhda matn yozish mumkin emas", show_alert=True)
         return
     title = dialog["title"]
     added = await add_group(user_profile_key(callback.from_user.id), chat_id, title)
-    await callback.answer("Қўшилди" if added else "Аллақачон бор")
+    if not acknowledged:
+        await callback.answer("Қўшилди" if added else "Аллақачон бор")
     groups = await list_groups(user_profile_key(callback.from_user.id))
     card_dialogs = _group_card_dialogs.get(callback.from_user.id)
     if card_dialogs:
@@ -2650,11 +2704,17 @@ async def add_group_cb(callback: CallbackQuery):
 
 @router.callback_query(F.data == "addallgroups")
 async def add_all_groups_cb(callback: CallbackQuery):
+    if not await _ensure_group_callback_access(callback):
+        return
+    await callback.answer("Гуруҳлар текширилмоқда...")
     try:
         dialogs = await get_user_dialog_groups(callback.from_user.id)
     except RuntimeError as exc:
         await callback.message.answer(f"❌ Хато: {exc}", reply_markup=profile_kb())
-        await callback.answer()
+        return
+    except Exception:
+        logger.exception("Bulk group refresh failed for user %s", callback.from_user.id)
+        await callback.message.answer("❌ Гуруҳларни олиб бўлмади. Қайта уриниб кўринг.")
         return
     added_count = 0
     skipped_count = 0
@@ -2680,7 +2740,6 @@ async def add_all_groups_cb(callback: CallbackQuery):
         "4-қадам: энди «💬 Хабар ёзиш» тугмасини босинг.",
         reply_markup=main_menu_kb(_is_admin(callback), True, True),
     )
-    await callback.answer("Қўшилди")
 
 
 @router.message(F.text.in_(GROUP_DELETE_TEXTS))

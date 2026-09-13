@@ -39,6 +39,8 @@ async def init_db():
             await conn.execute(text("ALTER TABLE pending_payments ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP"))
             await conn.execute(text("ALTER TABLE groups ADD COLUMN IF NOT EXISTS send_enabled BOOLEAN NOT NULL DEFAULT TRUE"))
             await conn.execute(text("ALTER TABLE groups ADD COLUMN IF NOT EXISTS disabled_reason TEXT"))
+            await conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS claimed_by BIGINT"))
+            await conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS claim_until TIMESTAMP"))
             # Rows may have been imported with explicit IDs. PostgreSQL sequences
             # do not advance in that case, so the next INSERT can reuse an
             # existing primary key. Keep each generated-ID sequence in sync.

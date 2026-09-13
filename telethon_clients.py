@@ -469,6 +469,8 @@ async def get_user_dialog_folders(user_id: int) -> list[dict]:
     try:
         async with asyncio.timeout(GROUP_SCAN_TIMEOUT_SECONDS):
             filters = await client(functions.messages.GetDialogFiltersRequest())
+            # Newer Telegram layers return messages.DialogFilters, not a list.
+            filters = getattr(filters, "filters", filters)
             async for dialog in client.iter_dialogs(limit=None, ignore_migrated=True):
                 if not dialog.is_group:
                     continue
