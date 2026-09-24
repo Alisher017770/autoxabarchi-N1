@@ -226,6 +226,24 @@ async def set_message_text(profile: str, text: str):
             settings = Settings(profile=profile)
             session.add(settings)
         settings.message_text = text
+        settings.message_sticker_data = None
+        settings.message_sticker_name = None
+        settings.message_sticker_kind = None
+        await session.commit()
+
+
+async def set_message_sticker(profile: str, data: bytes, name: str, kind: str) -> None:
+    """Save one non-Premium Telegram sticker as the profile's delivery content."""
+    async with async_session() as session:
+        result = await session.execute(select(Settings).where(Settings.profile == profile))
+        settings = result.scalar_one_or_none()
+        if settings is None:
+            settings = Settings(profile=profile)
+            session.add(settings)
+        settings.message_text = None
+        settings.message_sticker_data = bytes(data)
+        settings.message_sticker_name = name[:128]
+        settings.message_sticker_kind = kind[:16]
         await session.commit()
 
 
@@ -981,7 +999,7 @@ async def get_admin_user_card(user_id: int) -> dict | None:
             "active_until": active_until,
             "active": bool(active_until and active_until > now),
             "groups_count": groups_count,
-            "message_ready": bool(settings and settings.message_text),
+            "message_ready": bool(settings and settings.has_saved_message),
             "is_running": bool(settings and settings.is_running),
             "issue_type": issue.issue_type if issue else None,
             "issue_details": issue.details if issue else None,
@@ -1041,7 +1059,11 @@ async def list_problem_users(limit: int = 20) -> list[dict]:
                     UserAccount.session_string.is_(None),
                     BroadcastIssue.profile.is_not(None),
                     (Subscription.active_until > now) & (func.coalesce(group_counts.c.groups_count, 0) == 0),
-                    (Subscription.active_until > now) & or_(Settings.message_text.is_(None), Settings.profile.is_(None)),
+                    (Subscription.active_until > now)
+                    & or_(
+                        Settings.profile.is_(None),
+                        (Settings.message_text.is_(None) & Settings.message_sticker_data.is_(None)),
+                    ),
                 )
             )
             .order_by(UserAccount.updated_at.desc())
@@ -1055,7 +1077,7 @@ async def list_problem_users(limit: int = 20) -> list[dict]:
             if subscription and subscription.active_until and subscription.active_until > now:
                 if not groups_count:
                     reasons.append("гуруҳ қўшилмаган")
-                if not settings or not settings.message_text:
+                if not settings or not settings.has_saved_message:
                     reasons.append("хабар матни йўқ")
             if issue:
                 reasons.append(issue.details)

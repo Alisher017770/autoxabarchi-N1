@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, BigInteger, Integer, Boolean, Text, UniqueConstraint, DateTime
+from sqlalchemy import String, BigInteger, Integer, Boolean, Text, LargeBinary, UniqueConstraint, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from db import Base
 from time_display import utc_now
@@ -53,8 +53,17 @@ class Settings(Base):
 
     profile: Mapped[str] = mapped_column(String(20), primary_key=True)
     message_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A saved sticker is kept in PostgreSQL rather than a temporary file so it
+    # remains available to both broadcast workers and after a Railway deploy.
+    message_sticker_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    message_sticker_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    message_sticker_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
     is_running: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    @property
+    def has_saved_message(self) -> bool:
+        return bool(self.message_text or self.message_sticker_data)
 
 
 class BroadcastJob(Base):

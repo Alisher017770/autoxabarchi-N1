@@ -113,6 +113,7 @@ from repository import (
     search_users,
     set_bot_config,
     set_interval,
+    set_message_sticker,
     set_message_text,
     set_payment_status,
     set_railway_billing_config,
@@ -558,7 +559,7 @@ async def _readiness_text(user_id: int) -> tuple[str, bool]:
 
     ok_profile = bool(account and account.session_string)
     ok_groups = bool(groups)
-    ok_message = bool(settings_row.message_text)
+    ok_message = settings_row.has_saved_message
     ok_subscription = subscribed
     ready = ok_profile and ok_groups and ok_message and ok_subscription
 
@@ -2811,20 +2812,58 @@ async def ask_message(message: Message, state: FSMContext):
             "Ўзгартирмаслик учун бошқа керакли меню тугмасини босинг."
         )
         return
-    await message.answer("💬 Гуруҳларга юбориладиган хабар матнини юборинг.")
+    if getattr(current, "message_sticker_data", None):
+        await message.answer(
+            "🧩 Ҳозир стикер сақланган. Янгилаш учун матн ёки оддий/қимирлайдиган стикер юборинг.\n"
+            "Premium стикерлар автоматик юборишга қўлланмайди."
+        )
+        return
+    await message.answer("💬 Гуруҳларга юбориладиган хабар матни ёки оддий/қимирлайдиган стикер юборинг.")
 
 
 @router.message(AdStates.waiting_message_text)
-async def save_message(message: Message, state: FSMContext):
+async def save_message(message: Message, state: FSMContext, bot: Bot):
     if await _handle_reserved_menu(message, state):
         return
     if _is_back_text(message):
         await state.clear()
         await _show_home(message)
         return
+    sticker = getattr(message, "sticker", None)
+    if sticker:
+        if sticker.is_premium:
+            await message.answer(
+                "❌ Premium стикер автоматик юборилмайди. Оддий ёки қимирлайдиган оддий стикер танланг."
+            )
+            return
+        if sticker.is_mask:
+            await message.answer("❌ Маска-стикер қўлланмайди. Оддий стикер юборинг.")
+            return
+
+        suffix = ".tgs" if sticker.is_animated else ".webm" if sticker.is_video else ".webp"
+        kind = "animated" if sticker.is_animated else "video" if sticker.is_video else "static"
+        stream = BytesIO()
+        try:
+            await bot.download(sticker, destination=stream)
+        except Exception:
+            logger.exception("[%s] stikerni yuklab bo'lmadi", message.from_user.id)
+            await message.answer("❌ Стикерни сақлаб бўлмади. Яна бир марта юбориб кўринг.")
+            return
+        data = stream.getvalue()
+        if not data or len(data) > 1024 * 1024:
+            await message.answer("❌ Бу стикер жуда катта. Бошқа стикер танланг.")
+            return
+        await set_message_sticker(_key(message), data, f"sticker{suffix}", kind)
+        await state.clear()
+        await message.answer(
+            "✅ Стикер сақланди. Энди «🚀 Старт / Стоп» босилса, шу стикер гуруҳларга юборилади.",
+            reply_markup=await _main_kb(message),
+        )
+        await _send_next_step(message)
+        return
     text = message.html_text or message.text
     if not text:
-        await message.answer("Матнли хабар юборинг.")
+        await message.answer("Матн ёки оддий/қимирлайдиган стикер юборинг.")
         return
     await set_message_text(_key(message), text)
     await state.clear()
@@ -2942,7 +2981,7 @@ async def start_or_stop(message: Message, state: FSMContext):
         return
 
     groups = await list_groups(profile)
-    if not settings_row.message_text:
+    if not settings_row.has_saved_message:
         text, _ = await _readiness_text(message.from_user.id)
         await message.answer(text, reply_markup=await _main_kb(message))
         return

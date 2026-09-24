@@ -1,11 +1,13 @@
 import asyncio
 from datetime import datetime, timedelta
+from io import BytesIO
 import logging
 import os
 import socket
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -19,7 +21,15 @@ from telethon.errors import (
     UserRestrictedError,
 )
 from telethon import utils as telethon_utils
-from telethon.tl.types import InputPeerChannel, InputPeerChat
+from telethon.tl.types import (
+    DocumentAttributeAnimated,
+    DocumentAttributeFilename,
+    DocumentAttributeSticker,
+    DocumentAttributeVideo,
+    InputPeerChannel,
+    InputPeerChat,
+    InputStickerSetEmpty,
+)
 
 from config import (
     ADMIN_ID,
@@ -87,6 +97,43 @@ WRITE_FORBIDDEN_MARKERS = (
     "CHANNEL_PRIVATE",
     "USER_BANNED_IN_CHANNEL",
 )
+
+
+def _has_saved_content(settings) -> bool:
+    return bool(getattr(settings, "message_text", None) or getattr(settings, "message_sticker_data", None))
+
+
+def _sticker_attributes(name: str, kind: str | None):
+    attributes = [
+        DocumentAttributeFilename(name),
+        DocumentAttributeSticker("", InputStickerSetEmpty()),
+    ]
+    if kind == "animated":
+        attributes.append(DocumentAttributeAnimated())
+    elif kind == "video":
+        attributes.append(
+            DocumentAttributeVideo(0.0, 512, 512, supports_streaming=True, nosound=True)
+        )
+    return attributes
+
+
+async def _prepare_saved_sticker(client, settings):
+    data = getattr(settings, "message_sticker_data", None)
+    if not data:
+        return None
+    name = getattr(settings, "message_sticker_name", None) or "sticker.webp"
+    stream = BytesIO(bytes(data))
+    stream.name = name
+    uploaded = await client.upload_file(stream, file_name=name)
+    return uploaded, _sticker_attributes(name, getattr(settings, "message_sticker_kind", None))
+
+
+async def _send_saved_content(client, target, settings, prepared_sticker=None) -> None:
+    if getattr(settings, "message_sticker_data", None):
+        prepared = prepared_sticker or await _prepare_saved_sticker(client, settings)
+        await client.send_file(target, prepared[0], attributes=prepared[1], force_document=False)
+        return
+    await client.send_message(target, settings.message_text, parse_mode="html")
 
 
 def configure_broadcaster_bot(bot: Bot) -> None:
@@ -281,7 +328,7 @@ def _earliest_group_due_at(groups, cooldowns: dict[int, datetime]) -> datetime |
 async def _send_cycle(
     profile: str,
     user_id: int,
-    text: str,
+    settings,
     groups,
     cooldowns: dict[int, datetime],
     started_at: float,
@@ -294,6 +341,15 @@ async def _send_cycle(
     interval_minutes: int = 15,
 ) -> tuple[float, bool, int, int, int, int]:
     """Send one profile cycle while bounding global Telegram connections."""
+    # Kept for compatibility with the older text-only worker tests and any
+    # in-flight process that still passes a raw text value during deployment.
+    if isinstance(settings, str):
+        settings = SimpleNamespace(
+            message_text=settings,
+            message_sticker_data=None,
+            message_sticker_name=None,
+            message_sticker_kind=None,
+        )
     attempted_count = 0
     sent_count = 0
     write_forbidden_count = 0
@@ -317,6 +373,13 @@ async def _send_cycle(
 
         try:
             peer_targets = peer_targets if peer_targets is not None else {}
+            try:
+                prepared_sticker = await _prepare_saved_sticker(client, settings)
+            except Exception as exc:
+                await set_broadcast_issue(profile, "sticker", "Стикерни Telegram'га тайёрлаб бўлмади")
+                await set_running(profile, False)
+                logger.exception("[%s] stikerni yuborishga tayyorlab bo'lmadi", profile)
+                return next_rest_at, False, 0, 0, 0, 0
             try:
                 await _hydrate_missing_group_peers(client, profile, groups, peer_targets)
             except Exception as exc:
@@ -357,7 +420,7 @@ async def _send_cycle(
                 try:
                     attempted_count += 1
                     target = _stored_peer(group.chat_id, peer_targets.get(group.chat_id))
-                    await client.send_message(target, text, parse_mode="html")
+                    await _send_saved_content(client, target, settings, prepared_sticker)
                     sent_count += 1
                     await mark_group_success(profile, group.chat_id)
                     sent_at = utc_now()
@@ -495,7 +558,7 @@ async def _process_broadcast_job(job) -> None:
             await set_running(profile, False)
             await release_broadcast_job(profile, _worker_owner, generation)
             return
-        if not settings.message_text:
+        if not _has_saved_content(settings):
             await set_running(profile, False)
             await release_broadcast_job(profile, _worker_owner, generation)
             return
@@ -522,7 +585,7 @@ async def _process_broadcast_job(job) -> None:
             ) = await _send_cycle(
                 profile,
                 user_id,
-                settings.message_text,
+                settings,
                 groups,
                 cooldowns,
                 time.monotonic(),
@@ -661,8 +724,8 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
         return False, "Обуна фаол эмас. Аввал обунани янгиланг."
 
     settings = await get_settings(profile)
-    if not settings.message_text:
-        return False, "Текшириш учун аввал хабар матнини сақланг."
+    if not _has_saved_content(settings):
+        return False, "Текшириш учун аввал хабар ёки стикерни сақланг."
 
     groups = await list_spam_recheck_groups(profile, SPAM_RECHECK_GROUP_LIMIT)
     if not groups:
@@ -677,10 +740,15 @@ async def retry_spam_check(profile: str) -> tuple[bool, str]:
 
     attempted = 0
     forbidden = 0
+    try:
+        prepared_sticker = await _prepare_saved_sticker(client, settings)
+    except Exception:
+        await release_user_client(user_id)
+        return False, "Стикерни Telegram'га тайёрлаб бўлмади. Бошқа стикер танлаб кўринг."
     for group in groups:
         attempted += 1
         try:
-            await client.send_message(group.chat_id, settings.message_text, parse_mode="html")
+            await _send_saved_content(client, group.chat_id, settings, prepared_sticker)
             await mark_group_success(profile, group.chat_id)
             await set_group_cooldown(
                 profile,
