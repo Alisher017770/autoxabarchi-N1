@@ -23,6 +23,15 @@ class StickerDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.message_sticker_kind, "animated")
         self.assertTrue(settings.has_saved_message)
 
+    async def test_premium_sticker_file_is_saved_the_same_way(self):
+        await init_db()
+        profile = "premium-sticker-test-12345"
+        await set_message_sticker(profile, b"premium-sticker-bytes", "sticker.tgs", "animated")
+
+        settings = await get_settings(profile)
+        self.assertEqual(settings.message_sticker_data, b"premium-sticker-bytes")
+        self.assertEqual(settings.message_sticker_kind, "animated")
+
     def test_animated_sticker_is_sent_as_a_sticker_not_plain_text(self):
         attributes = broadcaster._sticker_attributes("sticker.tgs", "animated")
         self.assertTrue(any(type(item).__name__ == "DocumentAttributeSticker" for item in attributes))

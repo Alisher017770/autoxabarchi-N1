@@ -2814,8 +2814,7 @@ async def ask_message(message: Message, state: FSMContext):
         return
     if getattr(current, "message_sticker_data", None):
         await message.answer(
-            "🧩 Ҳозир стикер сақланган. Янгилаш учун матн ёки оддий/қимирлайдиган стикер юборинг.\n"
-            "Premium стикерлар автоматик юборишга қўлланмайди."
+            "🧩 Ҳозир стикер сақланган. Янгилаш учун матн ёки стикер юборинг."
         )
         return
     await message.answer("💬 Гуруҳларга юбориладиган хабар матни ёки оддий/қимирлайдиган стикер юборинг.")
@@ -2831,11 +2830,6 @@ async def save_message(message: Message, state: FSMContext, bot: Bot):
         return
     sticker = getattr(message, "sticker", None)
     if sticker:
-        if sticker.is_premium:
-            await message.answer(
-                "❌ Premium стикер автоматик юборилмайди. Оддий ёки қимирлайдиган оддий стикер танланг."
-            )
-            return
         if sticker.is_mask:
             await message.answer("❌ Маска-стикер қўлланмайди. Оддий стикер юборинг.")
             return

@@ -233,7 +233,7 @@ async def set_message_text(profile: str, text: str):
 
 
 async def set_message_sticker(profile: str, data: bytes, name: str, kind: str) -> None:
-    """Save one non-Premium Telegram sticker as the profile's delivery content."""
+    """Save one Telegram sticker as the profile's delivery content."""
     async with async_session() as session:
         result = await session.execute(select(Settings).where(Settings.profile == profile))
         settings = result.scalar_one_or_none()
